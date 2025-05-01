@@ -25,6 +25,84 @@
           }
         }
       }
+    },
+    "/law": {
+      "get": {
+        "summary": "Get Laws",
+        "operationId": "get_laws",
+        "parameters": [
+          {
+            "name": "law_name",
+            "in": "query",
+            "required": true,
+            "description": "법령을 조회하기 위한 이름",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "법령 목록 성공적인 응답",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/article": {
+      "get": {
+        "summary": "Get Article",
+        "operationId": "get_article",
+        "parameters": [
+          {
+            "name": "law_name",
+            "in": "query",
+            "required": true,
+            "description": "법령을 조회하기 위한 이름",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "article_no",
+            "in": "query",
+            "required": true,
+            "description": "법령의 조문 번호",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "법령 조문 성공적인 응답",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "article": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
