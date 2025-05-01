@@ -1,41 +1,25 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "School LawBot API",
-    "version": "1.0.0",
-    "description": "국가법령정보센터 기반 법령 검색 API"
+    "title": "FastAPI",
+    "version": "1.0.0"
   },
+  "servers": [
+    {
+      "url": "https://lawfastapi.onrender.com"
+    }
+  ],
   "paths": {
-    "/law": {
+    "/": {
       "get": {
-        "summary": "법령명으로 법령 정보 검색",
-        "parameters": [
-          {
-            "name": "law_name",
-            "in": "query",
-            "required": true,
-            "description": "검색할 법령명 (예: 학교폭력예방 및 대책에 관한 법률)",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+        "summary": "Root",
+        "operationId": "root_get",
         "responses": {
           "200": {
-            "description": "법령 정보",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "title": {
-                      "type": "string"
-                    },
-                    "id": {
-                      "type": "string"
-                    }
-                  }
-                }
+                "schema": {}
               }
             }
           }
