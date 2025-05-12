@@ -5,13 +5,14 @@ import requests
 import xml.etree.ElementTree as ET
 import os
 from dotenv import load_dotenv
-from urllib.parse import quote
 import re
+from difflib import get_close_matches
+import urllib.parse
 
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 최종 안정화")
+app = FastAPI(title="School LawBot API - fallback 제거, 정확도 향상")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,7 +26,10 @@ app.add_middleware(
 def root():
     return {"message": "School LawBot API is live."}
 
-# ✅ 약칭 → 정식명 매핑
+@app.get("/laws")
+def get_supported_laws():
+    return list(ABBREVIATIONS.keys())
+
 ABBREVIATIONS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
     "특수교육법": "장애인 등에 대한 특수교육법",
@@ -42,7 +46,7 @@ ABBREVIATIONS = {
     "정보공개법": "공공기관의 정보공개에 관한 법률"
 }
 
-def normalize(text: str) -> str:
+def normalize_number(text: str) -> str:
     return ''.join(re.findall(r'\d+', text or ""))
 
 def extract_subclause(text: str, sub_no: str):
@@ -64,29 +68,32 @@ def get_clause(
     if law_name in ABBREVIATIONS:
         law_name = ABBREVIATIONS[law_name]
 
-    article_norm = normalize(article_no)
-    clause_norm = normalize(clause_no) if clause_no else None
-    subclause_norm = normalize(subclause_no) if subclause_no else None
+    article_norm = normalize_number(article_no)
+    clause_norm = normalize_number(clause_no) if clause_no else None
+    subclause_norm = normalize_number(subclause_no) if subclause_no else None
 
     try:
-        encoded_name = quote(law_name)
+        # Step 1. lawId 검색 (인코딩 적용)
         res = requests.get(
             "https://www.law.go.kr/DRF/lawSearch.do",
-            params={"OC": API_KEY, "target": "law", "query": encoded_name, "type": "XML"},
+            params={"OC": API_KEY, "target": "law", "query": law_name, "type": "XML"},
             timeout=10
         )
         res.raise_for_status()
         laws = ET.fromstring(res.content).findall("law")
-        law_names = [l.findtext("lawName") for l in laws if l.findtext("lawName")]
+        law_names = [l.findtext("lawName").strip() for l in laws if l.findtext("lawName")]
 
-        matched_name = next((name for name in law_names if name == law_name), None)
+        # 유사도 기반 및 포함 검색 적용
+        match = get_close_matches(law_name.strip(), law_names, n=1, cutoff=0.6)
+        matched_name = match[0] if match else next((n for n in law_names if law_name.strip() in n), None)
+
         if not matched_name:
             return {
                 "error": f"법령 '{law_name}' 찾을 수 없음",
                 "suggestions": law_names
             }
 
-        law_id = next((l.findtext("lawId") for l in laws if l.findtext("lawName") == matched_name), None)
+        law_id = next((l.findtext("lawId") for l in laws if l.findtext("lawName") and l.findtext("lawName").strip() == matched_name), None)
 
         detail = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
@@ -95,9 +102,9 @@ def get_clause(
         )
         detail.raise_for_status()
         root = ET.fromstring(detail.content)
-
         for article in root.findall(".//조문"):
-            if normalize(article.findtext("조문번호")) != article_norm:
+            a_num = normalize_number(article.findtext("조문번호"))
+            if a_num != article_norm:
                 continue
 
             if not clause_no:
@@ -108,7 +115,8 @@ def get_clause(
                 }
 
             for clause in article.findall("항"):
-                if normalize(clause.findtext("항번호")) != clause_norm:
+                c_num = normalize_number(clause.findtext("항번호"))
+                if c_num != clause_norm:
                     continue
 
                 text = clause.findtext("항내용") or ""
