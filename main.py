@@ -1,16 +1,16 @@
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 import xml.etree.ElementTree as ET
 import os
 from dotenv import load_dotenv
-from difflib import get_close_matches
 import re
 
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 정확한 조문 응답 개선")
+app = FastAPI(title="School LawBot API - 조문/항/호 완전 대응")
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,29 +37,34 @@ ABBREVIATIONS = {
     "정보공개법": "공공기관의 정보공개에 관한 법률"
 }
 
-# ✅ 숫자만 추출
-def normalize_number(text: str, target: str) -> str:
-    num = ''.join(re.findall(r'\d+', text))
-    return num if num else text
+def normalize_number(text: str) -> str:
+    return ''.join(re.findall(r'\d+', text or ""))
 
-@app.get("/clause")
+def extract_subclause(text: str, sub_no: str):
+    pattern = rf"{sub_no}\.\s*(.*?)(?=\n\d+\.|$)"
+    match = re.search(pattern, text.replace("\r", "").replace("\n", "\n"), re.DOTALL)
+    return match.group(1).strip() if match else None
+
+@app.get("/law")
 def get_clause(
     law_name: str = Query(...),
     article_no: str = Query(...),
-    clause_no: str = Query(...)
+    clause_no: str = Query(None),
+    subclause_no: str = Query(None)
 ):
     if not API_KEY:
-        return {"error": "API 키가 없습니다.", "source": "fallback"}
+        return {"error": "API 키 없음"}
 
-    original = law_name
+    original_name = law_name
     if law_name in ABBREVIATIONS:
         law_name = ABBREVIATIONS[law_name]
 
-    article_no_norm = normalize_number(article_no, "article")
-    clause_no_norm = normalize_number(clause_no, "clause")
+    article_norm = normalize_number(article_no)
+    clause_norm = normalize_number(clause_no) if clause_no else None
+    subclause_norm = normalize_number(subclause_no) if subclause_no else None
 
     try:
-        # ✅ 법령 검색
+        # Step 1. lawId 검색
         res = requests.get(
             "https://www.law.go.kr/DRF/lawSearch.do",
             params={"OC": API_KEY, "target": "law", "query": law_name, "type": "XML"},
@@ -67,17 +72,13 @@ def get_clause(
         )
         res.raise_for_status()
         laws = ET.fromstring(res.content).findall("law")
-        law_names = [l.findtext("lawName") for l in laws]
-        match = get_close_matches(law_name, law_names, n=1, cutoff=0.8)
+        matched = next((l for l in laws if l.findtext("lawName") == law_name), None)
+        if not matched:
+            return {"error": f"법령 '{law_name}' 찾을 수 없음", "suggestions": [l.findtext("lawName") for l in laws]}
 
-        if not match:
-            return {"error": f"'{original}' (→ '{law_name}') 법령을 찾을 수 없습니다.",
-                    "suggestions": law_names, "source": "fallback"}
+        law_id = matched.findtext("lawId")
 
-        matched_name = match[0]
-        law_id = next((l.findtext("lawId") for l in laws if l.findtext("lawName") == matched_name), None)
-
-        # ✅ 법령 세부 호출
+        # Step 2. 조문 전체 호출
         detail = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
             params={"OC": API_KEY, "target": "law", "lawId": law_id, "type": "XML"},
@@ -85,34 +86,42 @@ def get_clause(
         )
         detail.raise_for_status()
         root = ET.fromstring(detail.content)
+        for article in root.findall(".//조문"):
+            a_num = normalize_number(article.findtext("조문번호"))
+            if a_num != article_norm:
+                continue
 
-        articles = root.findall(".//조문")
-        for article in articles:
-            if article.findtext("조문번호") == article_no_norm:
-                clauses = article.findall("항")
-                for clause in clauses:
-                    if clause.findtext("항번호") == clause_no_norm:
-                        clause_text = clause.findtext("항내용")
-                        return {
-                            "법령명": matched_name,
-                            "조문": article_no_norm,
-                            "항": clause_no_norm,
-                            "내용": clause_text if clause_text else "⚠️ 해당 항의 내용이 제공되지 않았습니다.",
-                            "matched_from": original,
-                            "source": "api"
-                        }
-
+            if not clause_no:
                 return {
-                    "error": f"{matched_name}에서 '{article_no_norm}조'는 찾았지만 '{clause_no_norm}항'은 존재하지 않습니다.",
-                    "available_clauses": [c.findtext("항번호") for c in clauses if c.findtext("항번호")],
-                    "source": "fallback"
+                    "법령명": law_name,
+                    "조문": article.findtext("조문번호"),
+                    "내용": ET.tostring(article, encoding="unicode")
                 }
 
-        return {
-            "error": f"{matched_name}에서 '{article_no_norm}조'를 찾을 수 없습니다.",
-            "available_articles": [a.findtext("조문번호") for a in articles if a.findtext("조문번호")],
-            "source": "fallback"
-        }
+            for clause in article.findall("항"):
+                c_num = normalize_number(clause.findtext("항번호"))
+                if c_num != clause_norm:
+                    continue
+
+                text = clause.findtext("항내용") or ""
+                if not subclause_no:
+                    return {
+                        "법령명": law_name,
+                        "조문": article.findtext("조문번호"),
+                        "항": clause.findtext("항번호"),
+                        "내용": text
+                    }
+
+                ho_text = extract_subclause(text, subclause_norm)
+                return {
+                    "법령명": law_name,
+                    "조문": article.findtext("조문번호"),
+                    "항": clause.findtext("항번호"),
+                    "호": subclause_no,
+                    "내용": ho_text or "해당 호 없음"
+                }
+
+        return {"error": f"{law_name}에서 제{article_no}조를 찾을 수 없습니다."}
 
     except Exception as e:
-        return {"error": str(e), "source": "fallback"}
+        return {"error": str(e)}
