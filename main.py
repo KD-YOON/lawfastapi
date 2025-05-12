@@ -9,7 +9,7 @@ import difflib
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 실시간 조문 + 오타 방지")
+app = FastAPI(title="School LawBot API - 조문+항 정확 응답 + API 허용 안내")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,17 +22,25 @@ app.add_middleware(
 @app.get("/")
 def root():
     return {
-        "message": "📘 School LawBot API (국가법령정보센터 실시간 연동)",
+        "message": "📘 School LawBot API",
         "guide": (
-            "🔐 GPT에서 상단 '허용하기' 또는 '항상 허용하기'를 누르지 않으면 법령 연결이 되지 않습니다."
+            "🔐 이 API는 국가법령정보센터와 실시간으로 연결됩니다.\n"
+            "ChatGPT 사용 시 화면 상단에 '허용하기' 또는 '항상 허용하기' 버튼이 뜨면 반드시 눌러주세요.\n"
+            "버튼을 누르지 않으면 GPT가 외부 API를 호출할 수 없습니다."
         ),
-        "example": "/article?law_name=학교폭력예방 및 대책에 관한 법률&article_no=제16조"
+        "examples": {
+            "조문조회": "/article?law_name=학교폭력예방 및 대책에 관한 법률&article_no=제16조",
+            "항조회": "/clause?law_name=학교폭력예방 및 대책에 관한 법률&article_no=제16조&clause_no=제3항"
+        }
     }
 
 @app.get("/law")
-def get_law(law_name: str = Query(..., description="법령명을 정확하게 입력하세요")):
+def get_law(law_name: str = Query(..., description="법령명 입력")):
     if not API_KEY:
-        return {"error": "API 키 누락 - Render의 환경변수 또는 .env 파일 확인 필요"}
+        return {
+            "error": "API 키가 누락되었습니다.",
+            "tip": "GPT 상단에 '허용하기' 버튼이 보이면 눌러 주세요."
+        }
 
     try:
         res = requests.get(
@@ -46,68 +54,79 @@ def get_law(law_name: str = Query(..., description="법령명을 정확하게 �
         law_title = root.findtext("law/lawName")
 
         if not law_id:
-            return {"error": f"'{law_name}'에 대한 lawId를 찾을 수 없습니다."}
+            return {"error": f"'{law_name}'에 대한 법령 ID를 찾을 수 없습니다."}
 
         return {"law_name": law_title, "law_id": law_id}
 
     except Exception as e:
-        return {"error": str(e)}
+        return {
+            "error": str(e),
+            "tip": "📢 외부 API 연결이 실패했습니다. GPT 상단의 '허용하기' 버튼을 눌렀는지 확인해 주세요."
+        }
 
-@app.get("/article")
-def get_article(
-    law_name: str = Query(..., description="법령명"),
-    article_no: str = Query(..., description="예: 제16조")
+@app.get("/clause")
+def get_clause(
+    law_name: str = Query(...),
+    article_no: str = Query(...),
+    clause_no: str = Query(...)
 ):
     if not API_KEY:
-        return {"error": "API 키가 누락되어 있습니다."}
+        return {"error": "API 키가 없습니다. .env 또는 환경변수 설정 필요"}
 
-    # 1단계: lawId 검색
     try:
-        res = requests.get(
+        # 1. 법령 ID 조회
+        search_res = requests.get(
             "https://www.law.go.kr/DRF/lawSearch.do",
             params={"OC": API_KEY, "target": "law", "query": law_name, "type": "XML"},
             timeout=10
         )
-        res.raise_for_status()
-        root = ET.fromstring(res.content)
-        law_id = root.findtext("law/lawId")
+        search_res.raise_for_status()
+        law_id = ET.fromstring(search_res.content).findtext("law/lawId")
 
         if not law_id:
-            return {"error": f"'{law_name}'에 해당하는 법령을 찾을 수 없습니다."}
+            return {"error": f"'{law_name}'의 법령 ID를 찾을 수 없습니다."}
 
-    except Exception as e:
-        return {"error": f"법령 ID 검색 중 오류: {str(e)}"}
-
-    # 2단계: 조문 전체 조회
-    try:
-        res = requests.get(
+        # 2. 조문 전체 불러오기
+        law_res = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
-            params={"OC": API_KEY, "target": "law", "type": "XML", "lawId": law_id},
+            params={"OC": API_KEY, "target": "law", "lawId": law_id, "type": "XML"},
             timeout=10
         )
-        res.raise_for_status()
-        law_xml = ET.fromstring(res.content)
+        law_res.raise_for_status()
+        root = ET.fromstring(law_res.content)
 
-        articles = law_xml.findall(".//조문")
-        all_numbers = [a.findtext("조문번호") for a in articles if a.findtext("조문번호")]
-
-        # 3단계: 정확한 조문 찾기
+        articles = root.findall(".//조문")
         for article in articles:
             if article.findtext("조문번호") == article_no:
+                clauses = article.findall("항")
+                clause_numbers = [c.findtext("항번호") for c in clauses if c.findtext("항번호")]
+
+                for clause in clauses:
+                    if clause.findtext("항번호") == clause_no:
+                        return {
+                            "법령명": law_name,
+                            "조문번호": article_no,
+                            "항번호": clause_no,
+                            "내용": clause.findtext("항내용")
+                        }
+
+                suggestion = difflib.get_close_matches(clause_no, clause_numbers, n=1, cutoff=0.5)
                 return {
-                    "법령명": law_name,
-                    "조문번호": article_no,
-                    "조문제목": article.findtext("조문제목"),
-                    "조문내용": article.findtext("조문내용")
+                    "error": f"{article_no} 안에 '{clause_no}' 항이 없습니다.",
+                    "suggestion": suggestion[0] if suggestion else None,
+                    "available_clauses": clause_numbers
                 }
 
-        # 4단계: 유사 조문 추천
-        suggestion = difflib.get_close_matches(article_no, all_numbers, n=1, cutoff=0.5)
+        article_list = [a.findtext("조문번호") for a in articles if a.findtext("조문번호")]
+        suggestion = difflib.get_close_matches(article_no, article_list, n=1, cutoff=0.5)
         return {
-            "error": f"'{article_no}' 조문은 존재하지 않습니다.",
+            "error": f"'{article_no}' 조문을 찾을 수 없습니다.",
             "suggestion": suggestion[0] if suggestion else None,
-            "available_articles": all_numbers
+            "available_articles": article_list
         }
 
     except Exception as e:
-        return {"error": f"조문 파싱 중 오류: {str(e)}"}
+        return {
+            "error": f"조문 또는 항 조회 중 오류: {str(e)}",
+            "tip": "📢 GPT 상단의 '허용하기' 버튼을 눌러야 외부 API 호출이 정상적으로 작동합니다."
+        }
