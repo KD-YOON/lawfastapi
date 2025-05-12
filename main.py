@@ -10,7 +10,7 @@ from difflib import get_close_matches
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 개선된 법령명 매칭")
+app = FastAPI(title="School LawBot API - 실시간 조문 응답 개선")
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,7 +56,7 @@ def get_clause(
     subclause_no: str = Query(None)
 ):
     if not API_KEY:
-        return {"error": "API 키 없음"}
+        return {"error": "API 키 없음", "source": "fallback"}
 
     original_name = law_name
     if law_name in ABBREVIATIONS:
@@ -87,7 +87,6 @@ def get_clause(
                 law_names.append(short)
                 id_map[short] = l.findtext("법령ID")
 
-        # 공백 제거 후 일치 확인
         def clean(s): return s.replace(" ", "").replace("\u3000", "").strip()
         matched_name = next((n for n in law_names if clean(n) == clean(law_name)), None)
 
@@ -98,12 +97,13 @@ def get_clause(
         if not matched_name:
             return {
                 "error": f"법령 '{law_name}' 찾을 수 없음",
-                "suggestions": law_names
+                "suggestions": law_names,
+                "source": "fallback"
             }
 
         law_id = id_map.get(matched_name)
         if not law_id:
-            return {"error": "법령 ID 없음"}
+            return {"error": "법령 ID 없음", "source": "fallback"}
 
         detail = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
@@ -121,7 +121,8 @@ def get_clause(
                 return {
                     "법령명": matched_name,
                     "조문": article.findtext("조문번호"),
-                    "내용": ET.tostring(article, encoding="unicode")
+                    "내용": ET.tostring(article, encoding="unicode"),
+                    "source": "api"
                 }
 
             for clause in article.findall("항"):
@@ -135,7 +136,8 @@ def get_clause(
                         "법령명": matched_name,
                         "조문": article.findtext("조문번호"),
                         "항": clause.findtext("항번호"),
-                        "내용": text
+                        "내용": text,
+                        "source": "api"
                     }
 
                 ho_text = extract_subclause(text, subclause_no)
@@ -144,10 +146,14 @@ def get_clause(
                     "조문": article.findtext("조문번호"),
                     "항": clause.findtext("항번호"),
                     "호": subclause_no,
-                    "내용": ho_text or "해당 호 없음"
+                    "내용": ho_text or "해당 호 없음",
+                    "source": "api"
                 }
 
-        return {"error": f"{matched_name}에서 제{article_no}조를 찾을 수 없습니다."}
+        return {
+            "error": f"{matched_name}에서 제{article_no}조를 찾을 수 없습니다.",
+            "source": "fallback"
+        }
 
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "source": "fallback"}
