@@ -10,7 +10,7 @@ import re
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 약칭 + 유사도 + 전처리")
+app = FastAPI(title="School LawBot API - 정확한 조문 응답 개선")
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,12 +37,10 @@ ABBREVIATIONS = {
     "정보공개법": "공공기관의 정보공개에 관한 법률"
 }
 
-def normalize_number(text, target):
-    # '조' 또는 '항'에 따라 형식 지정
+# ✅ 숫자만 추출
+def normalize_number(text: str, target: str) -> str:
     num = ''.join(re.findall(r'\d+', text))
-    if not num:
-        return text
-    return f"제{int(num)}{'조' if target == 'article' else '항'}"
+    return num if num else text
 
 @app.get("/clause")
 def get_clause(
@@ -61,6 +59,7 @@ def get_clause(
     clause_no_norm = normalize_number(clause_no, "clause")
 
     try:
+        # ✅ 법령 검색
         res = requests.get(
             "https://www.law.go.kr/DRF/lawSearch.do",
             params={"OC": API_KEY, "target": "law", "query": law_name, "type": "XML"},
@@ -76,12 +75,9 @@ def get_clause(
                     "suggestions": law_names, "source": "fallback"}
 
         matched_name = match[0]
-        law_id = None
-        for law in laws:
-            if law.findtext("lawName") == matched_name:
-                law_id = law.findtext("lawId")
-                break
+        law_id = next((l.findtext("lawId") for l in laws if l.findtext("lawName") == matched_name), None)
 
+        # ✅ 법령 세부 호출
         detail = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
             params={"OC": API_KEY, "target": "law", "lawId": law_id, "type": "XML"},
@@ -91,28 +87,32 @@ def get_clause(
         root = ET.fromstring(detail.content)
 
         articles = root.findall(".//조문")
-        article_nums = [a.findtext("조문번호") for a in articles if a.findtext("조문번호")]
-        article_match = get_close_matches(article_no_norm, article_nums, n=1, cutoff=0.6)
+        for article in articles:
+            if article.findtext("조문번호") == article_no_norm:
+                clauses = article.findall("항")
+                for clause in clauses:
+                    if clause.findtext("항번호") == clause_no_norm:
+                        clause_text = clause.findtext("항내용")
+                        return {
+                            "법령명": matched_name,
+                            "조문": article_no_norm,
+                            "항": clause_no_norm,
+                            "내용": clause_text if clause_text else "⚠️ 해당 항의 내용이 제공되지 않았습니다.",
+                            "matched_from": original,
+                            "source": "api"
+                        }
 
-        if article_match:
-            for article in articles:
-                if article.findtext("조문번호") == article_match[0]:
-                    clauses = article.findall("항")
-                    clause_nums = [c.findtext("항번호") for c in clauses if c.findtext("항번호")]
-                    clause_match = get_close_matches(clause_no_norm, clause_nums, n=1, cutoff=0.6)
-                    if clause_match:
-                        for clause in clauses:
-                            if clause.findtext("항번호") == clause_match[0]:
-                                return {
-                                    "법령명": matched_name,
-                                    "조문": article_match[0],
-                                    "항": clause_match[0],
-                                    "내용": clause.findtext("항내용"),
-                                    "matched_from": original,
-                                    "source": "api"
-                                }
+                return {
+                    "error": f"{matched_name}에서 '{article_no_norm}조'는 찾았지만 '{clause_no_norm}항'은 존재하지 않습니다.",
+                    "available_clauses": [c.findtext("항번호") for c in clauses if c.findtext("항번호")],
+                    "source": "fallback"
+                }
 
-        return {"error": "조문 또는 항을 찾지 못했습니다.", "source": "fallback"}
+        return {
+            "error": f"{matched_name}에서 '{article_no_norm}조'를 찾을 수 없습니다.",
+            "available_articles": [a.findtext("조문번호") for a in articles if a.findtext("조문번호")],
+            "source": "fallback"
+        }
 
     except Exception as e:
         return {"error": str(e), "source": "fallback"}
