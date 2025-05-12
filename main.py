@@ -10,7 +10,7 @@ import re
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 조문/항/호 완전 대응")
+app = FastAPI(title="School LawBot API - 조문/항/호 완전 대응 + 약칭 + lawName 정제")
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,11 +72,16 @@ def get_clause(
         )
         res.raise_for_status()
         laws = ET.fromstring(res.content).findall("law")
-        matched = next((l for l in laws if l.findtext("lawName") == law_name), None)
-        if not matched:
-            return {"error": f"법령 '{law_name}' 찾을 수 없음", "suggestions": [l.findtext("lawName") for l in laws]}
+        law_names = [l.findtext("lawName") for l in laws if l.findtext("lawName") is not None]
 
-        law_id = matched.findtext("lawId")
+        matched_name = next((name for name in law_names if name == law_name), None)
+        if not matched_name:
+            return {
+                "error": f"법령 '{law_name}' 찾을 수 없음",
+                "suggestions": law_names
+            }
+
+        law_id = next((l.findtext("lawId") for l in laws if l.findtext("lawName") == matched_name), None)
 
         # Step 2. 조문 전체 호출
         detail = requests.get(
@@ -93,7 +98,7 @@ def get_clause(
 
             if not clause_no:
                 return {
-                    "법령명": law_name,
+                    "법령명": matched_name,
                     "조문": article.findtext("조문번호"),
                     "내용": ET.tostring(article, encoding="unicode")
                 }
@@ -106,7 +111,7 @@ def get_clause(
                 text = clause.findtext("항내용") or ""
                 if not subclause_no:
                     return {
-                        "법령명": law_name,
+                        "법령명": matched_name,
                         "조문": article.findtext("조문번호"),
                         "항": clause.findtext("항번호"),
                         "내용": text
@@ -114,14 +119,14 @@ def get_clause(
 
                 ho_text = extract_subclause(text, subclause_norm)
                 return {
-                    "법령명": law_name,
+                    "법령명": matched_name,
                     "조문": article.findtext("조문번호"),
                     "항": clause.findtext("항번호"),
                     "호": subclause_no,
                     "내용": ho_text or "해당 호 없음"
                 }
 
-        return {"error": f"{law_name}에서 제{article_no}조를 찾을 수 없습니다."}
+        return {"error": f"{matched_name}에서 제{article_no}조를 찾을 수 없습니다."}
 
     except Exception as e:
         return {"error": str(e)}
