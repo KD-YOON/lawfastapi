@@ -4,11 +4,12 @@ import requests
 import xml.etree.ElementTree as ET
 import os
 from dotenv import load_dotenv
+from difflib import get_close_matches
 
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API with 약칭 지원 및 실시간 조문")
+app = FastAPI(title="School LawBot API - 약칭 + 유사도 기반 매칭")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ 약칭 → 정식명 매핑 테이블
+# ✅ 약칭 → 정식명 매핑
 ABBREVIATIONS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
     "특수교육법": "장애인 등에 대한 특수교육법",
@@ -38,15 +39,15 @@ ABBREVIATIONS = {
 @app.get("/")
 def root():
     return {
-        "message": "📘 School LawBot API (약칭 자동 변환 + 실시간 연결)",
-        "guide": "법령명을 약칭으로 입력해도 자동 변환되어 연결됩니다. `/law` 또는 `/clause`로 접근하세요."
+        "message": "📘 School LawBot API",
+        "guide": "법령명을 약칭으로 입력해도 자동 매핑되며, 실시간 API로 조문/항을 검색합니다."
     }
 
-# ✅ /law 엔드포인트: 법령명 → ID 조회용
+# ✅ /law : 법령명 → ID
 @app.get("/law")
-def get_law(law_name: str = Query(..., description="법령명 또는 약칭")):
+def get_law(law_name: str = Query(...)):
     if not API_KEY:
-        return {"error": "API 키 누락", "source": "fallback"}
+        return {"error": "API 키가 없습니다.", "source": "fallback"}
 
     original = law_name
     if law_name in ABBREVIATIONS:
@@ -60,21 +61,27 @@ def get_law(law_name: str = Query(..., description="법령명 또는 약칭")):
         )
         res.raise_for_status()
         laws = ET.fromstring(res.content).findall("law")
-        for law in laws:
-            if law.findtext("lawName") == law_name:
-                return {
-                    "law_name": law_name,
-                    "law_id": law.findtext("lawId"),
-                    "source": "api"
-                }
-        return {
-            "error": f"'{original}' (→ '{law_name}') 법령 ID를 찾지 못했습니다.",
-            "source": "fallback"
-        }
+        law_names = [l.findtext("lawName") for l in laws]
+        match = get_close_matches(law_name, law_names, n=1, cutoff=0.8)
+
+        if match:
+            name = match[0]
+            for law in laws:
+                if law.findtext("lawName") == name:
+                    return {
+                        "law_name": name,
+                        "law_id": law.findtext("lawId"),
+                        "matched_from": original,
+                        "source": "api"
+                    }
+
+        return {"error": f"'{original}' (→ '{law_name}') 법령 ID를 찾지 못했습니다.",
+                "suggestions": law_names, "source": "fallback"}
+
     except Exception as e:
         return {"error": str(e), "source": "fallback"}
 
-# ✅ /clause 엔드포인트: 조문+항 조회
+# ✅ /clause : 법령 조문 + 항
 @app.get("/clause")
 def get_clause(
     law_name: str = Query(...),
@@ -82,7 +89,7 @@ def get_clause(
     clause_no: str = Query(...)
 ):
     if not API_KEY:
-        return {"error": "API 키 없음", "source": "fallback"}
+        return {"error": "API 키가 없습니다.", "source": "fallback"}
 
     original = law_name
     if law_name in ABBREVIATIONS:
@@ -96,17 +103,19 @@ def get_clause(
         )
         res.raise_for_status()
         laws = ET.fromstring(res.content).findall("law")
+        law_names = [l.findtext("lawName") for l in laws]
+        match = get_close_matches(law_name, law_names, n=1, cutoff=0.8)
+
+        if not match:
+            return {"error": f"'{original}' (→ '{law_name}') 법령을 찾을 수 없습니다.",
+                    "suggestions": law_names, "source": "fallback"}
+
+        matched_name = match[0]
         law_id = None
         for law in laws:
-            if law.findtext("lawName") == law_name:
+            if law.findtext("lawName") == matched_name:
                 law_id = law.findtext("lawId")
                 break
-
-        if not law_id:
-            return {
-                "error": f"'{original}' (→ '{law_name}') 법령 ID를 찾지 못했습니다.",
-                "source": "fallback"
-            }
 
         detail = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
@@ -121,10 +130,11 @@ def get_clause(
                 for clause in article.findall("항"):
                     if clause.findtext("항번호") == clause_no:
                         return {
-                            "법령명": law_name,
-                            "조문번호": article_no,
-                            "항번호": clause_no,
+                            "법령명": matched_name,
+                            "조문": article_no,
+                            "항": clause_no,
                             "내용": clause.findtext("항내용"),
+                            "matched_from": original,
                             "source": "api"
                         }
 
