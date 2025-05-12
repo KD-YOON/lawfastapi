@@ -1,8 +1,9 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "FastAPI",
-    "version": "1.0.0"
+    "title": "School LawBot API",
+    "version": "1.0.0",
+    "description": "약칭 자동 변환 + 국가법령정보센터 API 실시간 연결"
   },
   "servers": [
     {
@@ -13,43 +14,22 @@
     "/": {
       "get": {
         "summary": "Root",
+        "description": "API 정보 및 가이드 제공",
         "operationId": "root_get",
         "responses": {
           "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/law": {
-      "get": {
-        "summary": "Get Laws",
-        "operationId": "get_laws",
-        "parameters": [
-          {
-            "name": "law_name",
-            "in": "query",
-            "required": true,
-            "description": "법령을 조회하기 위한 이름",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "법령 목록 성공적인 응답",
+            "description": "API 설명 응답",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "guide": {
+                      "type": "string"
+                    }
                   }
                 }
               }
@@ -58,16 +38,53 @@
         }
       }
     },
-    "/article": {
+    "/law": {
       "get": {
-        "summary": "Get Article",
-        "operationId": "get_article",
+        "summary": "Get Law ID",
+        "description": "법령명 또는 약칭으로 실시간 법령 ID 검색",
+        "operationId": "get_law",
         "parameters": [
           {
             "name": "law_name",
             "in": "query",
             "required": true,
-            "description": "법령을 조회하기 위한 이름",
+            "description": "법령명 또는 약칭",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "법령 정보",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "law_name": { "type": "string" },
+                    "law_id": { "type": "string" },
+                    "matched_from": { "type": "string" },
+                    "source": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/clause": {
+      "get": {
+        "summary": "Get Clause",
+        "description": "법령명, 조문 번호, 항 번호로 실시간 조문 내용 조회",
+        "operationId": "get_clause",
+        "parameters": [
+          {
+            "name": "law_name",
+            "in": "query",
+            "required": true,
+            "description": "법령명 또는 약칭",
             "schema": {
               "type": "string"
             }
@@ -76,26 +93,35 @@
             "name": "article_no",
             "in": "query",
             "required": true,
-            "description": "법령의 조문 번호",
+            "description": "조문 번호 (예: 제16조)",
             "schema": {
-              "type": "integer"
+              "type": "string"
+            }
+          },
+          {
+            "name": "clause_no",
+            "in": "query",
+            "required": true,
+            "description": "항 번호 (예: 제1항)",
+            "schema": {
+              "type": "string"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "법령 조문 성공적인 응답",
+            "description": "조문 항 응답",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "article": {
-                      "type": "string"
-                    },
-                    "description": {
-                      "type": "string"
-                    }
+                    "법령명": { "type": "string" },
+                    "조문": { "type": "string" },
+                    "항": { "type": "string" },
+                    "내용": { "type": "string" },
+                    "matched_from": { "type": "string" },
+                    "source": { "type": "string" }
                   }
                 }
               }
