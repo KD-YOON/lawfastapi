@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import requests
@@ -11,7 +10,7 @@ from difflib import get_close_matches
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 정확 법령 인식")
+app = FastAPI(title="School LawBot API - 정확한 법령명 공백 제거 반영")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,10 +23,6 @@ app.add_middleware(
 @app.get("/")
 def root():
     return {"message": "School LawBot API is live."}
-
-@app.get("/laws")
-def get_supported_laws():
-    return list(ABBREVIATIONS.keys())
 
 ABBREVIATIONS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
@@ -80,22 +75,18 @@ def get_clause(
         res.raise_for_status()
         laws = ET.fromstring(res.content).findall("law")
 
-        # ✅ lawName과 약칭 포함해서 모두 비교 리스트로 구성
         law_names = []
-        law_ids = {}
+        id_map = {}
         for l in laws:
-            full = l.findtext("lawName")
-            short = l.findtext("lawSmlNm")
+            full = (l.findtext("lawName") or "").replace("\u3000", "").strip()
+            short = (l.findtext("lawSmlNm") or "").replace("\u3000", "").strip()
             if full:
-                clean = full.strip().replace("\u3000", " ")
-                law_names.append(clean)
-                law_ids[clean] = l.findtext("lawId")
+                law_names.append(full)
+                id_map[full] = l.findtext("lawId")
             if short:
-                clean = short.strip().replace("\u3000", " ")
-                law_names.append(clean)
-                law_ids[clean] = l.findtext("lawId")
+                law_names.append(short)
+                id_map[short] = l.findtext("lawId")
 
-        # ✅ 정확 일치 우선, 그다음 유사도 fallback
         matched_name = next((n for n in law_names if n == law_name.strip()), None)
         if not matched_name:
             match = get_close_matches(law_name.strip(), law_names, n=1, cutoff=0.6)
@@ -107,7 +98,9 @@ def get_clause(
                 "suggestions": law_names
             }
 
-        law_id = law_ids.get(matched_name)
+        law_id = id_map.get(matched_name)
+        if not law_id:
+            return {"error": "법령 ID 없음"}
 
         detail = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
