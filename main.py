@@ -10,7 +10,7 @@ import re
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 조문/항/호 완전 대응 + 약칭 + lawName 정제")
+app = FastAPI(title="School LawBot API - 최종본")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,6 +19,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+def root():
+    return {"message": "School LawBot API is live."}
 
 # ✅ 약칭 → 정식명 매핑
 ABBREVIATIONS = {
@@ -72,7 +76,7 @@ def get_clause(
         )
         res.raise_for_status()
         laws = ET.fromstring(res.content).findall("law")
-        law_names = [l.findtext("lawName") for l in laws if l.findtext("lawName") is not None]
+        law_names = [l.findtext("lawName") for l in laws if l.findtext("lawName")]
 
         matched_name = next((name for name in law_names if name == law_name), None)
         if not matched_name:
