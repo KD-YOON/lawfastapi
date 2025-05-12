@@ -11,7 +11,7 @@ from difflib import get_close_matches
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 법률/시행령 구분 정확화")
+app = FastAPI(title="School LawBot API - 정확 법령 인식")
 
 app.add_middleware(
     CORSMiddleware,
@@ -79,12 +79,24 @@ def get_clause(
         )
         res.raise_for_status()
         laws = ET.fromstring(res.content).findall("law")
-        law_names = [l.findtext("lawName").strip() for l in laws if l.findtext("lawName")]
 
-        # 정확히 일치하는 항목 먼저
+        # ✅ lawName과 약칭 포함해서 모두 비교 리스트로 구성
+        law_names = []
+        law_ids = {}
+        for l in laws:
+            full = l.findtext("lawName")
+            short = l.findtext("lawSmlNm")
+            if full:
+                clean = full.strip().replace("\u3000", " ")
+                law_names.append(clean)
+                law_ids[clean] = l.findtext("lawId")
+            if short:
+                clean = short.strip().replace("\u3000", " ")
+                law_names.append(clean)
+                law_ids[clean] = l.findtext("lawId")
+
+        # ✅ 정확 일치 우선, 그다음 유사도 fallback
         matched_name = next((n for n in law_names if n == law_name.strip()), None)
-
-        # 유사도 fallback
         if not matched_name:
             match = get_close_matches(law_name.strip(), law_names, n=1, cutoff=0.6)
             matched_name = match[0] if match else None
@@ -95,7 +107,7 @@ def get_clause(
                 "suggestions": law_names
             }
 
-        law_id = next((l.findtext("lawId") for l in laws if l.findtext("lawName") and l.findtext("lawName").strip() == matched_name), None)
+        law_id = law_ids.get(matched_name)
 
         detail = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
