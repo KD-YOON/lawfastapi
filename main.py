@@ -5,12 +5,13 @@ import requests
 import xml.etree.ElementTree as ET
 import os
 from dotenv import load_dotenv
+from urllib.parse import quote
 import re
 
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 최종본")
+app = FastAPI(title="School LawBot API - 최종 안정화")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,7 +42,7 @@ ABBREVIATIONS = {
     "정보공개법": "공공기관의 정보공개에 관한 법률"
 }
 
-def normalize_number(text: str) -> str:
+def normalize(text: str) -> str:
     return ''.join(re.findall(r'\d+', text or ""))
 
 def extract_subclause(text: str, sub_no: str):
@@ -63,15 +64,15 @@ def get_clause(
     if law_name in ABBREVIATIONS:
         law_name = ABBREVIATIONS[law_name]
 
-    article_norm = normalize_number(article_no)
-    clause_norm = normalize_number(clause_no) if clause_no else None
-    subclause_norm = normalize_number(subclause_no) if subclause_no else None
+    article_norm = normalize(article_no)
+    clause_norm = normalize(clause_no) if clause_no else None
+    subclause_norm = normalize(subclause_no) if subclause_no else None
 
     try:
-        # Step 1. lawId 검색
+        encoded_name = quote(law_name)
         res = requests.get(
             "https://www.law.go.kr/DRF/lawSearch.do",
-            params={"OC": API_KEY, "target": "law", "query": law_name, "type": "XML"},
+            params={"OC": API_KEY, "target": "law", "query": encoded_name, "type": "XML"},
             timeout=10
         )
         res.raise_for_status()
@@ -87,7 +88,6 @@ def get_clause(
 
         law_id = next((l.findtext("lawId") for l in laws if l.findtext("lawName") == matched_name), None)
 
-        # Step 2. 조문 전체 호출
         detail = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
             params={"OC": API_KEY, "target": "law", "lawId": law_id, "type": "XML"},
@@ -95,9 +95,9 @@ def get_clause(
         )
         detail.raise_for_status()
         root = ET.fromstring(detail.content)
+
         for article in root.findall(".//조문"):
-            a_num = normalize_number(article.findtext("조문번호"))
-            if a_num != article_norm:
+            if normalize(article.findtext("조문번호")) != article_norm:
                 continue
 
             if not clause_no:
@@ -108,8 +108,7 @@ def get_clause(
                 }
 
             for clause in article.findall("항"):
-                c_num = normalize_number(clause.findtext("항번호"))
-                if c_num != clause_norm:
+                if normalize(clause.findtext("항번호")) != clause_norm:
                     continue
 
                 text = clause.findtext("항내용") or ""
@@ -121,7 +120,7 @@ def get_clause(
                         "내용": text
                     }
 
-                ho_text = extract_subclause(text, subclause_norm)
+                ho_text = extract_subclause(text, subclause_no)
                 return {
                     "법령명": matched_name,
                     "조문": article.findtext("조문번호"),
