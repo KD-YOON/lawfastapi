@@ -10,7 +10,7 @@ from difflib import get_close_matches
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - 정확한 법령명 공백 제거 반영")
+app = FastAPI(title="School LawBot API - 개선된 법령명 매칭")
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,16 +78,19 @@ def get_clause(
         law_names = []
         id_map = {}
         for l in laws:
-            full = (l.findtext("lawName") or "").replace("\u3000", "").strip()
-            short = (l.findtext("lawSmlNm") or "").replace("\u3000", "").strip()
+            full = (l.findtext("법령명") or "").replace("\u3000", "").strip()
+            short = (l.findtext("법령약칭명") or "").replace("\u3000", "").strip()
             if full:
                 law_names.append(full)
-                id_map[full] = l.findtext("lawId")
+                id_map[full] = l.findtext("법령ID")
             if short:
                 law_names.append(short)
-                id_map[short] = l.findtext("lawId")
+                id_map[short] = l.findtext("법령ID")
 
-        matched_name = next((n for n in law_names if n == law_name.strip()), None)
+        # 공백 제거 후 일치 확인
+        def clean(s): return s.replace(" ", "").replace("\u3000", "").strip()
+        matched_name = next((n for n in law_names if clean(n) == clean(law_name)), None)
+
         if not matched_name:
             match = get_close_matches(law_name.strip(), law_names, n=1, cutoff=0.6)
             matched_name = match[0] if match else None
