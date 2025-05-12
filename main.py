@@ -4,12 +4,11 @@ import requests
 import xml.etree.ElementTree as ET
 import os
 from dotenv import load_dotenv
-import difflib
 
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API with 법령 약칭 지원")
+app = FastAPI(title="School LawBot API with 약칭 지원 및 실시간 조문")
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,9 +39,42 @@ ABBREVIATIONS = {
 def root():
     return {
         "message": "📘 School LawBot API (약칭 자동 변환 + 실시간 연결)",
-        "guide": "법령명을 약칭으로 입력해도 자동으로 정식명으로 변환되어 연결됩니다."
+        "guide": "법령명을 약칭으로 입력해도 자동 변환되어 연결됩니다. `/law` 또는 `/clause`로 접근하세요."
     }
 
+# ✅ /law 엔드포인트: 법령명 → ID 조회용
+@app.get("/law")
+def get_law(law_name: str = Query(..., description="법령명 또는 약칭")):
+    if not API_KEY:
+        return {"error": "API 키 누락", "source": "fallback"}
+
+    original = law_name
+    if law_name in ABBREVIATIONS:
+        law_name = ABBREVIATIONS[law_name]
+
+    try:
+        res = requests.get(
+            "https://www.law.go.kr/DRF/lawSearch.do",
+            params={"OC": API_KEY, "target": "law", "query": law_name, "type": "XML"},
+            timeout=10
+        )
+        res.raise_for_status()
+        laws = ET.fromstring(res.content).findall("law")
+        for law in laws:
+            if law.findtext("lawName") == law_name:
+                return {
+                    "law_name": law_name,
+                    "law_id": law.findtext("lawId"),
+                    "source": "api"
+                }
+        return {
+            "error": f"'{original}' (→ '{law_name}') 법령 ID를 찾지 못했습니다.",
+            "source": "fallback"
+        }
+    except Exception as e:
+        return {"error": str(e), "source": "fallback"}
+
+# ✅ /clause 엔드포인트: 조문+항 조회
 @app.get("/clause")
 def get_clause(
     law_name: str = Query(...),
@@ -50,10 +82,9 @@ def get_clause(
     clause_no: str = Query(...)
 ):
     if not API_KEY:
-        return {"error": "API 키가 없습니다", "source": "fallback"}
+        return {"error": "API 키 없음", "source": "fallback"}
 
-    # ✅ 약칭 자동 변환
-    law_name_original = law_name
+    original = law_name
     if law_name in ABBREVIATIONS:
         law_name = ABBREVIATIONS[law_name]
 
@@ -73,8 +104,7 @@ def get_clause(
 
         if not law_id:
             return {
-                "error": f"'{law_name_original}' (→ '{law_name}') 법령 ID를 찾을 수 없습니다.",
-                "suggestions": [l.findtext("lawName") for l in laws],
+                "error": f"'{original}' (→ '{law_name}') 법령 ID를 찾지 못했습니다.",
                 "source": "fallback"
             }
 
@@ -99,7 +129,7 @@ def get_clause(
                         }
 
         return {
-            "error": f"{article_no} {clause_no} 항을 찾을 수 없습니다.",
+            "error": f"{article_no} {clause_no} 항을 찾지 못했습니다.",
             "source": "fallback"
         }
 
