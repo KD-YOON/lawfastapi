@@ -4,15 +4,14 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 import xml.etree.ElementTree as ET
 import os
+import urllib.parse
 from dotenv import load_dotenv
 import re
-from difflib import get_close_matches
-import urllib.parse
 
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 
-app = FastAPI(title="School LawBot API - fallback 제거, 정확도 향상")
+app = FastAPI(title="School LawBot API - FINAL")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,10 +24,6 @@ app.add_middleware(
 @app.get("/")
 def root():
     return {"message": "School LawBot API is live."}
-
-@app.get("/laws")
-def get_supported_laws():
-    return list(ABBREVIATIONS.keys())
 
 ABBREVIATIONS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
@@ -73,27 +68,25 @@ def get_clause(
     subclause_norm = normalize_number(subclause_no) if subclause_no else None
 
     try:
-        # Step 1. lawId 검색 (인코딩 적용)
+        # 인코딩된 쿼리 사용
+        encoded_law_name = urllib.parse.quote(law_name)
         res = requests.get(
             "https://www.law.go.kr/DRF/lawSearch.do",
-            params={"OC": API_KEY, "target": "law", "query": law_name, "type": "XML"},
+            params={"OC": API_KEY, "target": "law", "query": encoded_law_name, "type": "XML"},
             timeout=10
         )
         res.raise_for_status()
         laws = ET.fromstring(res.content).findall("law")
-        law_names = [l.findtext("lawName").strip() for l in laws if l.findtext("lawName")]
+        law_names = [l.findtext("lawName") for l in laws if l.findtext("lawName")]
 
-        # 유사도 기반 및 포함 검색 적용
-        match = get_close_matches(law_name.strip(), law_names, n=1, cutoff=0.6)
-        matched_name = match[0] if match else next((n for n in law_names if law_name.strip() in n), None)
-
+        matched_name = next((name for name in law_names if name == law_name), None)
         if not matched_name:
             return {
                 "error": f"법령 '{law_name}' 찾을 수 없음",
                 "suggestions": law_names
             }
 
-        law_id = next((l.findtext("lawId") for l in laws if l.findtext("lawName") and l.findtext("lawName").strip() == matched_name), None)
+        law_id = next((l.findtext("lawId") for l in laws if l.findtext("lawName") == matched_name), None)
 
         detail = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
@@ -128,7 +121,7 @@ def get_clause(
                         "내용": text
                     }
 
-                ho_text = extract_subclause(text, subclause_no)
+                ho_text = extract_subclause(text, subclause_norm)
                 return {
                     "법령명": matched_name,
                     "조문": article.findtext("조문번호"),
