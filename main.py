@@ -128,3 +128,65 @@ def get_clause(
             return {"error": "법령 ID 없음", "source": "fallback"}
 
         detail = requests.get(
+            "https://www.law.go.kr/DRF/lawService.do",
+            params={"OC": API_KEY, "target": "law", "lawId": law_id, "type": "XML"},
+            timeout=10
+        )
+        detail.raise_for_status()
+        root = ET.fromstring(detail.content)
+
+        meta = LAW_META.get(matched_name, {})
+
+        for article in root.findall(".//조문"):
+            a_num = normalize_number(article.findtext("조문번호"))
+            if a_num != article_norm:
+                continue
+
+            if not clause_no:
+                return {
+                    "법령명": matched_name,
+                    "조문": article.findtext("조문번호"),
+                    "내용": article.findtext("조문내용") or ET.tostring(article, encoding="unicode"),
+                    "메타정보": meta,
+                    "source": "api"
+                }
+
+            for clause in article.findall("항"):
+                c_num = normalize_number(clause.findtext("항번호"))
+                if c_num != clause_norm:
+                    continue
+
+                text = clause.findtext("항내용") or ""
+                if not subclause_no:
+                    return {
+                        "법령명": matched_name,
+                        "조문": article.findtext("조문번호"),
+                        "항": clause.findtext("항번호"),
+                        "내용": text or "내용 없음",
+                        "메타정보": meta,
+                        "source": "api"
+                    }
+
+                ho_text = extract_subclause(text, subclause_no)
+                return {
+                    "법령명": matched_name,
+                    "조문": article.findtext("조문번호"),
+                    "항": clause.findtext("항번호"),
+                    "호": subclause_no,
+                    "내용": ho_text or "해당 호 없음",
+                    "메타정보": meta,
+                    "source": "api"
+                }
+
+        return {
+            "error": f"'{matched_name}'에서 제{article_no}조를 찾을 수 없습니다.",
+            "메타정보": meta,
+            "source": "fallback"
+        }
+
+    except Exception as e:
+        return {
+            "error": str(e),
+            "trace": traceback.format_exc(),
+            "source": "fallback"
+        }
