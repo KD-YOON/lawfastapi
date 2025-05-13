@@ -32,7 +32,6 @@ ABBREVIATIONS = {
     "학교폭력예방법 시행령": "학교폭력예방 및 대책에 관한 법률 시행령",
     "특수교육법": "장애인 등에 대한 특수교육법",
     "아동복지법": "아동복지법",
-    # 필요 시 추가...
 }
 
 def normalize_number(text: str) -> str:
@@ -123,6 +122,14 @@ def get_clause(
         detail.raise_for_status()
         root = ET.fromstring(detail.content)
 
+        if DEBUG:
+            print("📃 조문 목록:")
+            for article in root.findall(".//조문"):
+                print(" - 조문번호:", article.findtext("조문번호"))
+                for clause in article.findall("항"):
+                    print("   - 항번호:", clause.findtext("항번호"))
+                    print("   - 항내용:", clause.findtext("항내용"))
+
         for article in root.findall(".//조문"):
             a_num = normalize_number(article.findtext("조문번호"))
             if a_num != article_norm:
@@ -132,7 +139,7 @@ def get_clause(
                 return {
                     "법령명": matched_name,
                     "조문": article.findtext("조문번호"),
-                    "내용": ET.tostring(article, encoding="unicode"),
+                    "내용": article.findtext("조문내용") or ET.tostring(article, encoding="unicode"),
                     "source": "api"
                 }
 
@@ -147,7 +154,7 @@ def get_clause(
                         "법령명": matched_name,
                         "조문": article.findtext("조문번호"),
                         "항": clause.findtext("항번호"),
-                        "내용": text,
+                        "내용": text or "내용 없음",
                         "source": "api"
                     }
 
