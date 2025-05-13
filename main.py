@@ -6,9 +6,12 @@ import os
 from dotenv import load_dotenv
 import re
 from difflib import get_close_matches
+import traceback
 
+# 환경 변수 불러오기
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
+DEBUG = os.getenv("DEBUG", "False") == "True"
 
 app = FastAPI(title="School LawBot API - 실시간 조문 응답 개선")
 
@@ -24,6 +27,7 @@ app.add_middleware(
 def root():
     return {"message": "School LawBot API is live."}
 
+# 약칭 → 정식 명칭 사전
 ABBREVIATIONS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
     "특수교육법": "장애인 등에 대한 특수교육법",
@@ -73,6 +77,10 @@ def get_clause(
             timeout=10
         )
         res.raise_for_status()
+
+        if DEBUG:
+            print("📡 호출 URL:", res.url)
+
         laws = ET.fromstring(res.content).findall("law")
 
         law_names = []
@@ -94,10 +102,17 @@ def get_clause(
             match = get_close_matches(law_name.strip(), law_names, n=1, cutoff=0.6)
             matched_name = match[0] if match else None
 
+        if DEBUG:
+            print("🧪 원래 입력:", original_name)
+            print("🔎 보정된 입력:", law_name)
+            print("📋 추출된 법령 목록:", law_names)
+            print("✅ 최종 매칭:", matched_name)
+
         if not matched_name:
             return {
                 "error": f"법령 '{law_name}' 찾을 수 없음",
-                "suggestions": law_names,
+                "suggestions": law_names[:10],
+                "query_url": res.url,
                 "source": "fallback"
             }
 
@@ -112,6 +127,7 @@ def get_clause(
         )
         detail.raise_for_status()
         root = ET.fromstring(detail.content)
+
         for article in root.findall(".//조문"):
             a_num = normalize_number(article.findtext("조문번호"))
             if a_num != article_norm:
@@ -156,4 +172,8 @@ def get_clause(
         }
 
     except Exception as e:
-        return {"error": str(e), "source": "fallback"}
+        return {
+            "error": str(e),
+            "trace": traceback.format_exc(),
+            "source": "fallback"
+        }
