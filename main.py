@@ -6,14 +6,19 @@ import json
 
 app = FastAPI()
 
-# 예시 데이터 로딩 (로컬 JSON 파일 로딩 시 여기에 삽입)
+# JSON 파일 로딩
 with open("학교폭력예방 및 대책에 관한 법률.json", "r", encoding="utf-8") as f:
     law_data = json.load(f)
 
-# 약칭 → 정식 법령명 맵핑
+with open("2. 학교폭력예방 및 대책에 관한 법률 시행령.json", "r", encoding="utf-8") as f:
+    regulation_data = json.load(f)
+
+# 약칭 → 정식 법령명 매핑
 law_name_map = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
-    "학교폭력예방 및 대책에 관한 법률": "학교폭력예방 및 대책에 관한 법률"
+    "학교폭력예방 및 대책에 관한 법률": "학교폭력예방 및 대책에 관한 법률",
+    "학교폭력예방법 시행령": "학교폭력예방 및 대책에 관한 법률 시행령",
+    "학교폭력예방 및 대책에 관한 법률 시행령": "학교폭력예방 및 대책에 관한 법률 시행령"
 }
 
 @app.get("/ping")
@@ -29,14 +34,19 @@ def get_law(
     decoded_law_name = unquote(law_name)
     standard_name = law_name_map.get(decoded_law_name, decoded_law_name)
 
-    if standard_name != law_data.get("법령명"):
+    # 해당 법령 데이터 선택
+    if standard_name == law_data.get("법령명"):
+        data = law_data
+    elif standard_name == regulation_data.get("법령명"):
+        data = regulation_data
+    else:
         return {
             "error": f"법령 '{decoded_law_name}'을 찾을 수 없음",
             "law_name": decoded_law_name,
-            "available": law_data.get("법령명")
+            "available": [law_data.get("법령명"), regulation_data.get("법령명")]
         }
 
-    articles = law_data.get("조문", {})
+    articles = data.get("조문", {})
     article = articles.get(f"제{article_no}조")
     if not article:
         return {"error": f"제{article_no}조를 찾을 수 없습니다."}
