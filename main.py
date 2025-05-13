@@ -6,14 +6,14 @@ import os
 from dotenv import load_dotenv
 import re
 from difflib import get_close_matches
+from datetime import datetime
 import traceback
 
-# 환경 변수 불러오기
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
 DEBUG = os.getenv("DEBUG", "False") == "True"
 
-app = FastAPI(title="School LawBot API - 실시간 조문 응답 개선")
+app = FastAPI(title="School LawBot API - 최신 법령 및 시행령 자동 구분")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,21 +27,12 @@ app.add_middleware(
 def root():
     return {"message": "School LawBot API is live."}
 
-# 약칭 → 정식 명칭 사전
 ABBREVIATIONS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
+    "학교폭력예방법 시행령": "학교폭력예방 및 대책에 관한 법률 시행령",
     "특수교육법": "장애인 등에 대한 특수교육법",
-    "북한이탈주민법": "북한이탈주민의 보호 및 정착지원에 관한 법률",
     "아동복지법": "아동복지법",
-    "교육기본법": "교육기본법",
-    "초중등교육법": "초·중등교육법",
-    "고등교육법": "고등교육법",
-    "교원지위법": "교원의 지위 향상 및 교육활동 보호를 위한 특별법",
-    "교직원징계령": "교육공무원 징계령",
-    "공무원징계령": "국가공무원법 시행령",
-    "성폭력처벌법": "성폭력범죄의 처벌 등에 관한 특례법",
-    "청소년보호법": "청소년 보호법",
-    "정보공개법": "공공기관의 정보공개에 관한 법률"
+    # 필요 시 추가...
 }
 
 def normalize_number(text: str) -> str:
@@ -63,8 +54,8 @@ def get_clause(
         return {"error": "API 키 없음", "source": "fallback"}
 
     original_name = law_name
-    if law_name in ABBREVIATIONS:
-        law_name = ABBREVIATIONS[law_name]
+    law_name = ABBREVIATIONS.get(law_name, law_name)
+    is_enforcement = "시행령" in law_name
 
     article_norm = normalize_number(article_no)
     clause_norm = normalize_number(clause_no) if clause_no else None
@@ -77,36 +68,40 @@ def get_clause(
             timeout=10
         )
         res.raise_for_status()
-
         if DEBUG:
             print("📡 호출 URL:", res.url)
 
         laws = ET.fromstring(res.content).findall("law")
 
-        law_names = []
-        id_map = {}
-        for l in laws:
-            full = (l.findtext("법령명") or "").replace("\u3000", "").strip()
-            short = (l.findtext("법령약칭명") or "").replace("\u3000", "").strip()
-            if full:
-                law_names.append(full)
-                id_map[full] = l.findtext("법령ID")
-            if short:
-                law_names.append(short)
-                id_map[short] = l.findtext("법령ID")
+        latest_laws = {}
+        for law in laws:
+            full = (law.findtext("법령명") or "").replace("\u3000", "").strip()
+            short = (law.findtext("법령약칭명") or "").replace("\u3000", "").strip()
+            law_id = law.findtext("법령ID")
+            pub_date = law.findtext("법령공포일자")
+
+            try:
+                pub_date_obj = datetime.strptime(pub_date, "%Y%m%d")
+            except:
+                continue
+
+            for name in [full, short]:
+                if name and (is_enforcement == ("시행령" in name)):
+                    if name not in latest_laws or pub_date_obj > latest_laws[name]["date"]:
+                        latest_laws[name] = {"id": law_id, "date": pub_date_obj}
+
+        law_names = list(latest_laws.keys())
+        id_map = {name: latest_laws[name]["id"] for name in law_names}
 
         def clean(s): return s.replace(" ", "").replace("\u3000", "").strip()
-        matched_name = next((n for n in law_names if clean(n) == clean(law_name)), None)
-
-        if not matched_name:
-            match = get_close_matches(law_name.strip(), law_names, n=1, cutoff=0.6)
-            matched_name = match[0] if match else None
+        match = get_close_matches(law_name.strip(), law_names, n=1, cutoff=0.6)
+        matched_name = match[0] if match else next((n for n in law_names if clean(n) == clean(law_name)), None)
 
         if DEBUG:
-            print("🧪 원래 입력:", original_name)
-            print("🔎 보정된 입력:", law_name)
-            print("📋 추출된 법령 목록:", law_names)
-            print("✅ 최종 매칭:", matched_name)
+            print("🧪 입력값:", original_name)
+            print("🔍 보정:", law_name)
+            print("📋 후보:", law_names)
+            print("✅ 매칭:", matched_name)
 
         if not matched_name:
             return {
