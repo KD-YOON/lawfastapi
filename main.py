@@ -7,7 +7,7 @@ import json
 app = FastAPI()
 
 # 예시 데이터 로딩 (로컬 JSON 파일 로딩 시 여기에 삽입)
-with open("학교폭력예방및대책법률_현행_완정제거.json", "r", encoding="utf-8") as f:
+with open("학교폭력예방 및 대책법률.json", "r", encoding="utf-8") as f:
     law_data = json.load(f)
 
 # 약칭 → 정식 법령명 맵핑
