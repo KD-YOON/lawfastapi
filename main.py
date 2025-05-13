@@ -11,7 +11,7 @@ import traceback
 
 load_dotenv()
 API_KEY = os.getenv("LAW_API_KEY")
-DEBUG = os.getenv("DEBUG", "False") == "True"
+DEBUG = True  # 강제 디버깅 모드 활성화
 
 app = FastAPI(title="School LawBot API - 최신 법령 및 시행령 자동 구분")
 
