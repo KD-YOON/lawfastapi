@@ -1,192 +1,67 @@
+
 from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
-import requests
-import xml.etree.ElementTree as ET
-import os
-from dotenv import load_dotenv
-import re
-from difflib import get_close_matches
-from datetime import datetime
-import traceback
+from typing import Optional
+from urllib.parse import unquote
+import json
 
-load_dotenv()
-API_KEY = os.getenv("LAW_API_KEY")
-DEBUG = True  # 강제 디버깅 모드 활성화
+app = FastAPI()
 
-app = FastAPI(title="School LawBot API - 최신 법령 및 시행령 자동 구분")
+# 예시 데이터 로딩 (로컬 JSON 파일 로딩 시 여기에 삽입)
+with open("학교폭력예방및대책법률_현행_완정제거.json", "r", encoding="utf-8") as f:
+    law_data = json.load(f)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/")
-def root():
-    return {"message": "School LawBot API is live."}
-
-ABBREVIATIONS = {
+# 약칭 → 정식 법령명 맵핑
+law_name_map = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
-    "학교폭력예방법 시행령": "학교폭력예방 및 대책에 관한 법률 시행령",
-    "특수교육법": "장애인 등에 대한 특수교육법",
-    "아동복지법": "아동복지법",
+    "학교폭력예방 및 대책에 관한 법률": "학교폭력예방 및 대책에 관한 법률"
 }
 
-LAW_META = {
-    "학교폭력예방 및 대책에 관한 법률": {
-        "법률번호": "제20790호",
-        "공포일자": "2025-03-18",
-        "시행일자": "2025-09-19"
-    },
-    "학교폭력예방 및 대책에 관한 법률 시행령": {
-        "법률번호": "제34233호",
-        "공포일자": "2024-03-01",
-        "시행일자": "2024-03-01"
-    }
-}
-
-def normalize_number(text: str) -> str:
-    return ''.join(re.findall(r'\d+', text or ""))
-
-def extract_subclause(text: str, sub_no: str):
-    pattern = rf"{sub_no}\.\s*(.*?)(?=\n\d+\.|$)"
-    match = re.search(pattern, text.replace("\r", "").replace("\n", "\n"), re.DOTALL)
-    return match.group(1).strip() if match else None
+@app.get("/ping")
+def ping():
+    return {"status": "ok"}
 
 @app.get("/law")
-def get_clause(
-    law_name: str = Query(...),
-    article_no: str = Query(...),
-    clause_no: str = Query(None),
-    subclause_no: str = Query(None)
+def get_law(
+    law_name: str = Query(..., description="법령명"),
+    article_no: str = Query(..., description="조문번호"),
+    clause_no: Optional[str] = Query(None, description="항 번호")
 ):
-    if not API_KEY:
-        return {"error": "API 키 없음", "source": "fallback"}
+    decoded_law_name = unquote(law_name)
+    standard_name = law_name_map.get(decoded_law_name, decoded_law_name)
 
-    original_name = law_name
-    law_name = ABBREVIATIONS.get(law_name, law_name)
-    is_enforcement = "시행령" in law_name
-
-    article_norm = normalize_number(article_no)
-    clause_norm = normalize_number(clause_no) if clause_no else None
-    subclause_norm = normalize_number(subclause_no) if subclause_no else None
-
-    try:
-        res = requests.get(
-            "https://www.law.go.kr/DRF/lawSearch.do",
-            params={"OC": API_KEY, "target": "law", "query": law_name, "type": "XML"},
-            timeout=10
-        )
-        res.raise_for_status()
-        if DEBUG:
-            print("📡 호출 URL:", res.url)
-
-        laws = ET.fromstring(res.content).findall("law")
-
-        latest_laws = {}
-        for law in laws:
-            full = (law.findtext("법령명") or "").replace("\u3000", "").strip()
-            short = (law.findtext("법령약칭명") or "").replace("\u3000", "").strip()
-            law_id = law.findtext("법령ID")
-            pub_date = law.findtext("법령공포일자")
-
-            try:
-                pub_date_obj = datetime.strptime(pub_date, "%Y%m%d")
-            except:
-                continue
-
-            for name in [full, short]:
-                if name and (is_enforcement == ("시행령" in name)):
-                    if name not in latest_laws or pub_date_obj > latest_laws[name]["date"]:
-                        latest_laws[name] = {"id": law_id, "date": pub_date_obj}
-
-        law_names = list(latest_laws.keys())
-        id_map = {name: latest_laws[name]["id"] for name in law_names}
-
-        def clean(s): return s.replace(" ", "").replace("\u3000", "").strip()
-        match = get_close_matches(law_name.strip(), law_names, n=1, cutoff=0.6)
-        matched_name = match[0] if match else next((n for n in law_names if clean(n) == clean(law_name)), None)
-
-        if DEBUG:
-            print("🧪 입력값:", original_name)
-            print("🔍 보정:", law_name)
-            print("📋 후보:", law_names)
-            print("✅ 매칭:", matched_name)
-
-        if not matched_name:
-            return {
-                "error": f"법령 '{law_name}' 찾을 수 없음",
-                "suggestions": law_names[:10],
-                "query_url": res.url,
-                "source": "fallback"
-            }
-
-        law_id = id_map.get(matched_name)
-        if not law_id:
-            return {"error": "법령 ID 없음", "source": "fallback"}
-
-        detail = requests.get(
-            "https://www.law.go.kr/DRF/lawService.do",
-            params={"OC": API_KEY, "target": "law", "lawId": law_id, "type": "XML"},
-            timeout=10
-        )
-        detail.raise_for_status()
-        root = ET.fromstring(detail.content)
-
-        meta = LAW_META.get(matched_name, {})
-
-        for article in root.findall(".//조문"):
-            a_num = normalize_number(article.findtext("조문번호"))
-            if a_num != article_norm:
-                continue
-
-            if not clause_no:
-                return {
-                    "법령명": matched_name,
-                    "조문": article.findtext("조문번호"),
-                    "내용": article.findtext("조문내용") or ET.tostring(article, encoding="unicode"),
-                    "메타정보": meta,
-                    "source": "api"
-                }
-
-            for clause in article.findall("항"):
-                c_num = normalize_number(clause.findtext("항번호"))
-                if c_num != clause_norm:
-                    continue
-
-                text = clause.findtext("항내용") or ""
-                if not subclause_no:
-                    return {
-                        "법령명": matched_name,
-                        "조문": article.findtext("조문번호"),
-                        "항": clause.findtext("항번호"),
-                        "내용": text or "내용 없음",
-                        "메타정보": meta,
-                        "source": "api"
-                    }
-
-                ho_text = extract_subclause(text, subclause_no)
-                return {
-                    "법령명": matched_name,
-                    "조문": article.findtext("조문번호"),
-                    "항": clause.findtext("항번호"),
-                    "호": subclause_no,
-                    "내용": ho_text or "해당 호 없음",
-                    "메타정보": meta,
-                    "source": "api"
-                }
-
+    if standard_name != law_data.get("법령명"):
         return {
-            "error": f"'{matched_name}'에서 제{article_no}조를 찾을 수 없습니다.",
-            "메타정보": meta,
-            "source": "fallback"
+            "error": f"법령 '{decoded_law_name}'을 찾을 수 없음",
+            "law_name": decoded_law_name,
+            "available": law_data.get("법령명")
         }
 
-    except Exception as e:
+    articles = law_data.get("조문", {})
+    article = articles.get(f"제{article_no}조")
+    if not article:
+        return {"error": f"제{article_no}조를 찾을 수 없습니다."}
+
+    if clause_no:
+        clause = article.get("항", {}).get(f"{clause_no}항")
+        if clause:
+            return {
+                "source": "api",
+                "law_name": standard_name,
+                "article": f"제{article_no}조",
+                "clause": f"{clause_no}항",
+                "조문명": article.get("조문명"),
+                "조문": article.get("조문"),
+                "내용": clause.get("내용"),
+                "호": clause.get("호")
+            }
+        else:
+            return {"error": f"제{article_no}조 제{clause_no}항을 찾을 수 없습니다."}
+    else:
         return {
-            "error": str(e),
-            "trace": traceback.format_exc(),
-            "source": "fallback"
+            "source": "api",
+            "law_name": standard_name,
+            "article": f"제{article_no}조",
+            "조문명": article.get("조문명"),
+            "조문": article.get("조문"),
+            "항": article.get("항")
         }
