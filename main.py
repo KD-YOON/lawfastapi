@@ -34,6 +34,19 @@ ABBREVIATIONS = {
     "아동복지법": "아동복지법",
 }
 
+LAW_META = {
+    "학교폭력예방 및 대책에 관한 법률": {
+        "법률번호": "제20790호",
+        "공포일자": "2025-03-18",
+        "시행일자": "2025-09-19"
+    },
+    "학교폭력예방 및 대책에 관한 법률 시행령": {
+        "법률번호": "제34233호",
+        "공포일자": "2024-03-01",
+        "시행일자": "2024-03-01"
+    }
+}
+
 def normalize_number(text: str) -> str:
     return ''.join(re.findall(r'\d+', text or ""))
 
@@ -115,67 +128,3 @@ def get_clause(
             return {"error": "법령 ID 없음", "source": "fallback"}
 
         detail = requests.get(
-            "https://www.law.go.kr/DRF/lawService.do",
-            params={"OC": API_KEY, "target": "law", "lawId": law_id, "type": "XML"},
-            timeout=10
-        )
-        detail.raise_for_status()
-        root = ET.fromstring(detail.content)
-
-        if DEBUG:
-            print("📃 조문 목록:")
-            for article in root.findall(".//조문"):
-                print(" - 조문번호:", article.findtext("조문번호"))
-                for clause in article.findall("항"):
-                    print("   - 항번호:", clause.findtext("항번호"))
-                    print("   - 항내용:", clause.findtext("항내용"))
-
-        for article in root.findall(".//조문"):
-            a_num = normalize_number(article.findtext("조문번호"))
-            if a_num != article_norm:
-                continue
-
-            if not clause_no:
-                return {
-                    "법령명": matched_name,
-                    "조문": article.findtext("조문번호"),
-                    "내용": article.findtext("조문내용") or ET.tostring(article, encoding="unicode"),
-                    "source": "api"
-                }
-
-            for clause in article.findall("항"):
-                c_num = normalize_number(clause.findtext("항번호"))
-                if c_num != clause_norm:
-                    continue
-
-                text = clause.findtext("항내용") or ""
-                if not subclause_no:
-                    return {
-                        "법령명": matched_name,
-                        "조문": article.findtext("조문번호"),
-                        "항": clause.findtext("항번호"),
-                        "내용": text or "내용 없음",
-                        "source": "api"
-                    }
-
-                ho_text = extract_subclause(text, subclause_no)
-                return {
-                    "법령명": matched_name,
-                    "조문": article.findtext("조문번호"),
-                    "항": clause.findtext("항번호"),
-                    "호": subclause_no,
-                    "내용": ho_text or "해당 호 없음",
-                    "source": "api"
-                }
-
-        return {
-            "error": f"{matched_name}에서 제{article_no}조를 찾을 수 없습니다.",
-            "source": "fallback"
-        }
-
-    except Exception as e:
-        return {
-            "error": str(e),
-            "trace": traceback.format_exc(),
-            "source": "fallback"
-        }
