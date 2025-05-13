@@ -10,7 +10,7 @@ app = FastAPI()
 with open("학교폭력예방 및 대책에 관한 법률.json", "r", encoding="utf-8") as f:
     law_data = json.load(f)
 
-with open("학교폭력예방 및 대책에 관한 법률 시행령.json", "r", encoding="utf-8") as f:
+with open("2. 학교폭력예방 및 대책에 관한 법률 시행령.json", "r", encoding="utf-8") as f:
     regulation_data = json.load(f)
 
 # 약칭 → 정식 법령명 매핑
