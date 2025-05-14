@@ -1,77 +1,66 @@
 from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
-import json
-import requests
-import xml.etree.ElementTree as ET
 from urllib.parse import quote
+import requests
+import xmltodict  # ← 반드시 설치 필요 (Render에서는 requirements.txt에 추가)
+import json
 
-app = FastAPI()
+app = FastAPI(
+    title="School LawBot API",
+    description="""
+School LawBot API는 외부 법령 검색 기능을 위해 국가법령정보센터 API를 사용합니다. 
+이 서비스는 사용자의 개인정보를 수집하지 않으며, 법령 조문 검색만을 수행합니다.
 
-# CORS 설정
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+🔒 **개인정보보호방침**: https://kd-yoon.github.io/privacy-policy
+📄 **이용약관**: https://kd-yoon.github.io/terms
+
+✅ GPT에서 이 API를 호출하려면 위 두 정책 링크를 설정하고 '항상 허용'으로 승인해야 합니다.
+""",
+    version="1.0.0"
 )
 
-# fallback 파일 경로
+# fallback JSON 파일 경로
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
 
-# 유니코드 원 문자 정규화 (① → 1 등)
-def normalize_clause_number(text):
-    if not text:
-        return None
-    num_map = {
-        "①": "1", "②": "2", "③": "3", "④": "4", "⑤": "5",
-        "⑥": "6", "⑦": "7", "⑧": "8", "⑨": "9", "⑩": "10",
-        "⑪": "11", "⑫": "12", "⑬": "13", "⑭": "14", "⑮": "15",
-        "⑯": "16", "⑰": "17", "⑱": "18", "⑲": "19", "⑳": "20"
-    }
-    return "".join(num_map.get(ch, ch) for ch in text)
-
-# fallback JSON 조회
+# fallback JSON 조회 함수
 def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
     try:
         with open(FALLBACK_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        조문_key = f"제{article_no}조"
-        clause_no = normalize_clause_number(clause_no)
-        subclause_no = normalize_clause_number(subclause_no)
-        항_key = clause_no + "항" if clause_no else None
-        호_key = subclause_no + "호" if subclause_no else None
+        article_key = f"제{article_no}조"
+        clause_key = f"{clause_no}항" if clause_no else None
+        subclause_key = f"{subclause_no}호" if subclause_no else None
 
-        조문 = data["조문"].get(조문_key)
-        if not 조문:
+        article = data.get("조문", {}).get(article_key)
+        if not article:
             return None
 
-        항 = 조문.get("항", {}).get(항_key) if 항_key else None
-        호 = 항.get("호", {}).get(호_key) if 항 and 호_key else None
+        clause = article.get("항", {}).get(clause_key) if clause_key else None
+        subclause = clause.get("호", {}).get(subclause_key) if clause and subclause_key else None
 
         내용 = (
-            호 or
-            (항.get("내용") if 항 else None) or
-            조문.get("조문")
+            subclause or
+            (clause.get("내용") if clause else None) or
+            article.get("조문")
         )
 
         return {
             "source": "fallback",
             "출처": "백업 데이터",
             "법령명": law_name,
-            "조문": 조문_key,
-            "항": 항_key or "",
-            "호": 호_key or "",
+            "조문": article_key,
+            "항": clause_key or "",
+            "호": subclause_key or "",
             "내용": 내용,
-            "법령링크": f"https://www.law.go.kr/법령/{quote(law_name)}/{조문_key}"
+            "법령링크": f"https://www.law.go.kr/법령/{quote(law_name)}/{article_key}"
         }
 
-    except Exception:
+    except Exception as e:
+        print(f"[Fallback Error] {e}")
         return None
 
-# law_name -> lawId 추출 함수 (XML 파싱)
+# law_name → lawId 추출 함수
 def get_law_id(law_name):
     search_url = "https://www.law.go.kr/DRF/lawSearch.do"
     params = {
@@ -80,25 +69,41 @@ def get_law_id(law_name):
         "type": "XML",
         "query": law_name
     }
-    response = requests.get(search_url, params=params)
-    if response.status_code != 200:
-        return None
-    root = ET.fromstring(response.text)
-    law_id_element = root.find("law/lawId")
-    return law_id_element.text if law_id_element is not None else None
+    res = requests.get(search_url, params=params)
+    res.raise_for_status()
+    data = xmltodict.parse(res.text)
+    return data.get("LawSearch", {}).get("law", {}).get("lawId")
 
-# 조문 추출 함수
-def extract_clause_from_json(data, article_no, clause_no=None, subclause_no=None):
+# 조문 내용 추출 함수 (XML → dict 구조 파싱)
+def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
-        article_key = f"제{article_no}조"
-        clauses = data.get("조문", {}).get(article_key)
-        if not clauses:
-            return "해당 조문 없음"
+        data = xmltodict.parse(xml_text)
+        articles = data.get("Law", {}).get("article", [])
 
-        항 = clauses.get("항", {}).get(f"{clause_no}항") if clause_no else None
-        호 = 항.get("호", {}).get(f"{subclause_no}호") if 항 and subclause_no else None
-        return 호 or (항.get("내용") if 항 else None) or clauses.get("조문") or "내용 없음"
-    except:
+        # 단일 조문도 list가 아닐 수 있음
+        if isinstance(articles, dict):
+            articles = [articles]
+
+        for article in articles:
+            if article.get("ArticleTitle") == f"제{article_no}조":
+                if clause_no:
+                    clauses = article.get("Paragraph", [])
+                    if isinstance(clauses, dict):
+                        clauses = [clauses]
+                    for clause in clauses:
+                        if clause.get("ParagraphNum") == clause_no:
+                            if subclause_no:
+                                subclauses = clause.get("SubParagraph", [])
+                                if isinstance(subclauses, dict):
+                                    subclauses = [subclauses]
+                                for sub in subclauses:
+                                    if sub.get("SubParagraphNum") == subclause_no:
+                                        return sub.get("SubParagraphContent")
+                            return clause.get("ParagraphContent")
+                return article.get("ArticleContent")
+        return "내용 없음"
+    except Exception as e:
+        print(f"[Parsing Error] {e}")
         return "내용 추출 오류"
 
 @app.get("/")
@@ -121,28 +126,27 @@ def get_law_clause(
         params = {
             "OC": "dyun204",
             "target": "law",
-            "type": "JSON",
+            "type": "XML",
             "lawId": law_id
         }
         res = requests.get(detail_url, params=params)
         res.raise_for_status()
-        data = res.json()
 
-        내용 = extract_clause_from_json(data, article_no, clause_no, subclause_no)
+        내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
 
         return {
             "source": "api",
             "출처": "실시간 API",
             "법령명": law_name,
             "조문": f"제{article_no}조",
-            "항": clause_no or "",
-            "호": subclause_no or "",
+            "항": f"{clause_no}항" if clause_no else "",
+            "호": f"{subclause_no}호" if subclause_no else "",
             "내용": 내용,
             "법령링크": f"https://www.law.go.kr/법령/{quote(law_name)}/제{article_no}조"
         }
 
     except Exception as e:
-        print(f"[API 호출 실패]: {e}")
+        print(f"[API 오류] {e}")
         fallback = load_fallback(law_name, article_no, clause_no, subclause_no)
         if fallback:
             return fallback
