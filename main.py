@@ -9,12 +9,6 @@ app = FastAPI()
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
 
-STATIC_LAW_IDS = {
-    "학교폭력예방법": "009620",
-    "학교폭력예방및대책에관한법률": "009620",
-    "학교폭력예방및대책에관한법률시행령": "0100921"
-}
-
 def normalize_law_name(law_name):
     return law_name.replace(" ", "")
 
@@ -57,10 +51,6 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
 
 def get_law_id(law_name):
     normalized = normalize_law_name(law_name)
-    if normalized in STATIC_LAW_IDS:
-        print(f"✅ 고정 law_id 사용: {STATIC_LAW_IDS[normalized]}")
-        return STATIC_LAW_IDS[normalized]
-
     try:
         search_url = "https://www.law.go.kr/DRF/lawSearch.do"
         params = {
@@ -74,23 +64,27 @@ def get_law_id(law_name):
         data = xmltodict.parse(res.text)
         law_entry = data.get("LawSearch", {}).get("law")
 
-        print("lawSearch 결과 법령명 목록:")
+        candidates = law_entry if isinstance(law_entry, list) else [law_entry]
 
-        if isinstance(law_entry, list):
-            for law in law_entry:
-                if law is None:
-                    continue
-                print(" -", law.get("법령명"))
-                if normalized in law.get("법령명", ""):
-                    return law.get("lawId")
-        elif isinstance(law_entry, dict):
-            print(" -", law_entry.get("법령명"))
-            if normalized in law_entry.get("법령명", ""):
-                return law_entry.get("lawId")
+        for law in candidates:
+            law_id = law.get("법령ID")
+            if not law_id:
+                continue
+            # 본문이 실제로 있는지 검사
+            detail_url = "https://www.law.go.kr/DRF/lawService.do"
+            check_params = {
+                "OC": "dyun204",
+                "target": "law",
+                "type": "XML",
+                "lawId": law_id
+            }
+            detail_res = requests.get(detail_url, params=check_params)
+            if "요청하신 법령이 없습니다" not in detail_res.text:
+                return law_id
 
         return None
     except Exception as e:
-        print("[lawId 조회 오류]", e)
+        print("[lawId 자동 판별 오류]", e)
         return None
 
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
@@ -137,7 +131,7 @@ def get_law_clause(
     try:
         print(f"📥 요청 수신됨: {law_name} {article_no} {clause_no} {subclause_no}")
         law_id = get_law_id(law_name)
-        print(f"🔍 law_id: {law_id}")
+        print(f"🔍 유효한 law_id 탐색 결과: {law_id}")
 
         if not law_id:
             raise ValueError("lawId 조회 실패")
