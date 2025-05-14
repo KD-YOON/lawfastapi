@@ -99,7 +99,7 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                         if clause.get("ParagraphNum") == clause_no:
                             if subclause_no:
                                 subclauses = clause.get("SubParagraph", [])
-                                if isinstance(subclausees := subclauses, dict):
+                                if isinstance(subclauses, dict):
                                     subclauses = [subclauses]
                                 for sub in subclauses:
                                     if sub.get("SubParagraphNum") == subclause_no:
@@ -115,6 +115,10 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
 def root():
     return {"message": "School LawBot API is running."}
 
+@app.get("/ping")
+def ping():
+    return {"message": "pong"}
+
 @app.get("/law")
 def get_law_clause(
     law_name: str = Query(..., description="법령명"),
@@ -123,6 +127,7 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None, description="호 번호")
 ):
     try:
+        print("요청 수신됨:", law_name, article_no, clause_no, subclause_no)
         law_id = get_law_id(law_name)
         print(f"law_id: {law_id}")
         if not law_id:
@@ -137,9 +142,10 @@ def get_law_clause(
         }
         res = requests.get(detail_url, params=params)
         res.raise_for_status()
-        print(f"lawService.do 응답 (앞부분): {res.text[:300]}...")
+        print(f"lawService 응답 앞부분: {res.text[:300]}...")
 
         내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
+        print(f"최종 추출된 내용: {내용}")
 
         return {
             "source": "api",
