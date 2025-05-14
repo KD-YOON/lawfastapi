@@ -63,7 +63,6 @@ def get_law_id(law_name):
         res.raise_for_status()
         data = xmltodict.parse(res.text)
         law_entry = data.get("LawSearch", {}).get("law")
-
         candidates = law_entry if isinstance(law_entry, list) else [law_entry]
 
         for law in candidates:
@@ -89,11 +88,13 @@ def get_law_id(law_name):
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
-        if not isinstance(data, dict):
-            print("⚠️ XML 파싱 실패 또는 에러 응답: dict 아님")
-            return "내용 없음"
 
-        articles = data.get("Law", {}).get("article", [])
+        if not isinstance(data, dict):
+            raise ValueError("⚠️ XML 파싱 결과가 dict 아님")
+        if "Law" not in data:
+            raise ValueError("⚠️ 'Law' 키가 존재하지 않음")
+
+        articles = data["Law"].get("article", [])
         if isinstance(articles, dict):
             articles = [articles]
 
@@ -116,8 +117,8 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                 return article.get("ArticleContent")
         return "내용 없음"
     except Exception as e:
-        print(f"[Parsing Error] {e}")
-        return "내용 추출 오류"
+        print(f"[Parsing Error - 안전강화] {e}")
+        return "내용 없음"
 
 @app.get("/")
 def root():
