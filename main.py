@@ -32,6 +32,10 @@ law_name_map = {
 def root():
     return {"message": "School LawBot API 정상 작동 중"}
 
+@app.get("/ping")
+def ping():
+    return {"status": "ok"}
+
 @app.get("/laws")
 def get_laws():
     return list(law_name_map.keys())
