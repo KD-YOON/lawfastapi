@@ -115,7 +115,8 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
 def root():
     return {"message": "School LawBot API is running."}
 
-@app.get("/ping")
+@app.api_route("/ping", methods=["GET", "HEAD"])
+
 def ping():
     return {"message": "pong"}
 
