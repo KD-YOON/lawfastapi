@@ -1,8 +1,9 @@
 from fastapi import FastAPI, Query
 from typing import Optional
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 import json
 import requests
+import xmltodict
 
 app = FastAPI()
 
@@ -47,21 +48,22 @@ def get_law(
 
     # 실시간 API 호출 시도
     try:
-        # 향후 구조화할 경우 법령 ID 맵 필요
         response = requests.get(API_BASE_URL, params={
             "OC": API_KEY,
             "target": "law",
-            "ID": "1863677",  # 예시: 학교폭력예방법 ID
+            "ID": "1863677",  # 예시 ID: 학교폭력예방법
             "type": "XML"
         }, timeout=5)
 
         if response.status_code == 200:
+            parsed = xmltodict.parse(response.text)
+            law_info = parsed.get("Law", {})
             return {
                 "source": "api",
-                "status_code": 200,
-                "raw": response.text[:1000]  # 실제로는 XML 파싱 필요
+                "raw": law_info,
+                "법령링크": f"https://www.law.go.kr/법령/{quote(standard_name)}/제{article_no}조"
             }
-    except Exception as e:
+    except Exception:
         pass  # 실패 시 fallback 진행
 
     # fallback: 로컬 JSON
@@ -90,7 +92,8 @@ def get_law(
                 "법령명": standard_name,
                 "조문": f"제{article_no}조",
                 "항": f"{clause_no}항",
-                "내용": clause.get("내용")
+                "내용": clause.get("내용"),
+                "법령링크": f"https://www.law.go.kr/법령/{quote(standard_name)}/제{article_no}조"
             }
             if subclause_no:
                 result["호"] = clause.get("호", {}).get(f"{subclause_no}호", "해당 호 없음")
@@ -106,5 +109,6 @@ def get_law(
             "조문": f"제{article_no}조",
             "조문명": article.get("조문명"),
             "조문": article.get("조문"),
-            "항": article.get("항")
+            "항": article.get("항"),
+            "법령링크": f"https://www.law.go.kr/법령/{quote(standard_name)}/제{article_no}조"
         }
