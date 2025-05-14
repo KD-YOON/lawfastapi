@@ -96,7 +96,7 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
     try:
         data = xmltodict.parse(xml_text)
 
-        # 🛡️ 오류 응답 대응
+        # ✅ 가장 먼저 오류 응답 처리
         if "LawService" in data:
             raise ValueError("⚠️ 요청하신 법령이 없습니다 (LawService 오류 응답)")
 
@@ -131,7 +131,7 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
 
                     if subclause_no:
                         subclauses = clause.get("SubParagraph")
-                        if isinstance(subclause_no, str):
+                        if isinstance(subclauses, str):
                             raise ValueError("⚠️ SubParagraph가 str임")
                         if isinstance(subclauses, dict):
                             subclauses = [subclauses]
