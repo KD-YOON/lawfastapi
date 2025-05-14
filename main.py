@@ -57,10 +57,20 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
         print(f"[Fallback Error] {e}")
         return None
 
+STATIC_LAW_IDS = {
+    "학교폭력예방법": "009620",
+    "학교폭력예방및대책에관한법률": "009620",
+    "학교폭력예방및대책에관한법률시행령": "0100921"
+}
+
 def normalize_law_name(law_name):
     return law_name.replace(" ", "")
 
 def get_law_id(law_name):
+    normalized = normalize_law_name(law_name)
+    if normalized in STATIC_LAW_IDS:
+        print(f"✅ 고정 law_id 사용: {STATIC_LAW_IDS[normalized]}")
+        return STATIC_LAW_IDS[normalized]
     try:
         search_url = "https://www.law.go.kr/DRF/lawSearch.do"
         params = {
@@ -78,7 +88,9 @@ def get_law_id(law_name):
 
         if isinstance(law_entry, list):
             for law in law_entry:
-                print(" -", law.get("법령명"))
+        if law is None:
+            continue
+        print(" -", law.get("법령명"))
                 if law_name in law.get("법령명", ""):
                     return law.get("lawId")
         elif isinstance(law_entry, dict):
