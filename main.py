@@ -71,12 +71,21 @@ def get_law_id(law_name):
         data = xmltodict.parse(res.text)
         law_entry = data.get("LawSearch", {}).get("law")
 
+        print("lawSearch 결과 법령명 목록:")
+
         if isinstance(law_entry, list):
             for law in law_entry:
-                if law.get("법령명") == law_name:
+                print(" -", law.get("법령명"))
+                if law_name in law.get("법령명", ""):
                     return law.get("lawId")
         elif isinstance(law_entry, dict):
-            return law_entry.get("lawId")
+            print(" -", law_entry.get("법령명"))
+            if law_name in law_entry.get("법령명", ""):
+                return law_entry.get("lawId")
+
+        return None
+    except Exception as e:
+        print("[lawId 조회 오류]", e)
         return None
     except Exception as e:
         print("[lawId 조회 오류]", e)
