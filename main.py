@@ -57,6 +57,9 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
         print(f"[Fallback Error] {e}")
         return None
 
+def normalize_law_name(law_name):
+    return law_name.replace(" ", "")
+
 def get_law_id(law_name):
     try:
         search_url = "https://www.law.go.kr/DRF/lawSearch.do"
@@ -64,7 +67,7 @@ def get_law_id(law_name):
             "OC": "dyun204",
             "target": "law",
             "type": "XML",
-            "query": law_name
+            "query": normalize_law_name(law_name)
         }
         res = requests.get(search_url, params=params)
         res.raise_for_status()
