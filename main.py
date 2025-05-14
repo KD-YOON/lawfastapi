@@ -45,19 +45,16 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
             article.get("조문")
         )
 
-        return JSONResponse(
-            content={
-                "source": "fallback",
-                "출처": "백업 데이터",
-                "법령명": law_name,
-                "조문": article_key,
-                "항": clause_key or "",
-                "호": subclause_key or "",
-                "내용": 내용 or "내용이 없습니다.",
-                "법령링크": f"https://www.law.go.kr/법령/{quote(law_name, safe='')}/{article_key}"
-            },
-            indent=2
-        )
+        return JSONResponse(content={
+            "source": "fallback",
+            "출처": "백업 데이터",
+            "법령명": law_name,
+            "조문": article_key,
+            "항": clause_key or "",
+            "호": subclause_key or "",
+            "내용": 내용 or "내용이 없습니다.",
+            "법령링크": f"https://www.law.go.kr/법령/{quote(law_name, safe='')}/{article_key}"
+        })
     except Exception as e:
         print(f"[Fallback Error] {e}")
         return None
@@ -113,7 +110,7 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                         if clause.get("ParagraphNum") == clause_no:
                             if subclause_no:
                                 subclauses = clause.get("SubParagraph", [])
-                                if isinstance(subclause in clause, dict):
+                                if isinstance(subclauses, dict):
                                     subclauses = [subclauses]
                                 for sub in subclauses:
                                     if sub.get("SubParagraphNum") == subclause_no:
@@ -161,19 +158,16 @@ def get_law_clause(
         내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
         print(f"✅ 추출된 내용: {내용[:100]}")
 
-        return JSONResponse(
-            content={
-                "source": "api",
-                "출처": "실시간 API",
-                "법령명": law_name,
-                "조문": f"제{article_no}조",
-                "항": f"{clause_no}항" if clause_no else "",
-                "호": f"{subclause_no}호" if subclause_no else "",
-                "내용": 내용,
-                "법령링크": f"https://www.law.go.kr/법령/{quote(law_name, safe='')}/제{article_no}조"
-            },
-            indent=2
-        )
+        return JSONResponse(content={
+            "source": "api",
+            "출처": "실시간 API",
+            "법령명": law_name,
+            "조문": f"제{article_no}조",
+            "항": f"{clause_no}항" if clause_no else "",
+            "호": f"{subclause_no}호" if subclause_no else "",
+            "내용": 내용,
+            "법령링크": f"https://www.law.go.kr/법령/{quote(law_name, safe='')}/제{article_no}조"
+        })
 
     except Exception as e:
         print(f"🚨 예외 발생: {e}")
@@ -181,13 +175,10 @@ def get_law_clause(
         if fallback:
             return fallback
         else:
-            return JSONResponse(
-                content={
-                    "error": "API 호출 실패 및 fallback 없음",
-                    "law_name": law_name,
-                    "article_no": article_no,
-                    "clause_no": clause_no or "",
-                    "subclause_no": subclause_no or ""
-                },
-                indent=2
-            )
+            return JSONResponse(content={
+                "error": "API 호출 실패 및 fallback 없음",
+                "law_name": law_name,
+                "article_no": article_no,
+                "clause_no": clause_no or "",
+                "subclause_no": subclause_no or ""
+            })
