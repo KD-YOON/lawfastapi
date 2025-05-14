@@ -2,7 +2,7 @@ from fastapi import FastAPI, Query
 from typing import Optional
 from urllib.parse import quote
 import requests
-import xmltodict  # ← 반드시 설치 필요 (Render에서는 requirements.txt에 추가)
+import xmltodict
 import json
 
 app = FastAPI(
@@ -19,10 +19,9 @@ School LawBot API는 외부 법령 검색 기능을 위해 국가법령정보센
     version="1.0.0"
 )
 
-# fallback JSON 파일 경로
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
 
-# fallback JSON 조회 함수
+# fallback 조회
 def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
     try:
         with open(FALLBACK_FILE, "r", encoding="utf-8") as f:
@@ -60,7 +59,7 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
         print(f"[Fallback Error] {e}")
         return None
 
-# law_name → lawId 추출 함수
+# law_name → lawId 추출 개선
 def get_law_id(law_name):
     search_url = "https://www.law.go.kr/DRF/lawSearch.do"
     params = {
@@ -72,15 +71,21 @@ def get_law_id(law_name):
     res = requests.get(search_url, params=params)
     res.raise_for_status()
     data = xmltodict.parse(res.text)
-    return data.get("LawSearch", {}).get("law", {}).get("lawId")
+    law_entry = data.get("LawSearch", {}).get("law")
 
-# 조문 내용 추출 함수 (XML → dict 구조 파싱)
+    if isinstance(law_entry, list):
+        for law in law_entry:
+            if law.get("법령명") == law_name:
+                return law.get("lawId")
+    elif isinstance(law_entry, dict):
+        return law_entry.get("lawId")
+    return None
+
+# 조문 내용 추출
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
         articles = data.get("Law", {}).get("article", [])
-
-        # 단일 조문도 list가 아닐 수 있음
         if isinstance(articles, dict):
             articles = [articles]
 
@@ -94,7 +99,7 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                         if clause.get("ParagraphNum") == clause_no:
                             if subclause_no:
                                 subclauses = clause.get("SubParagraph", [])
-                                if isinstance(subclauses, dict):
+                                if isinstance(subclausees := subclauses, dict):
                                     subclauses = [subclauses]
                                 for sub in subclauses:
                                     if sub.get("SubParagraphNum") == subclause_no:
@@ -119,6 +124,7 @@ def get_law_clause(
 ):
     try:
         law_id = get_law_id(law_name)
+        print(f"law_id: {law_id}")
         if not law_id:
             raise ValueError("lawId 조회 실패")
 
@@ -131,6 +137,7 @@ def get_law_clause(
         }
         res = requests.get(detail_url, params=params)
         res.raise_for_status()
+        print(f"lawService.do 응답 (앞부분): {res.text[:300]}...")
 
         내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
 
