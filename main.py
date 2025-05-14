@@ -70,7 +70,6 @@ def get_law_id(law_name):
             law_id = law.get("법령ID")
             if not law_id:
                 continue
-            # 본문이 실제로 있는지 검사
             detail_url = "https://www.law.go.kr/DRF/lawService.do"
             check_params = {
                 "OC": "dyun204",
@@ -90,8 +89,11 @@ def get_law_id(law_name):
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
-        articles = data.get("Law", {}).get("article", [])
+        if not isinstance(data, dict):
+            print("⚠️ XML 파싱 실패 또는 에러 응답: dict 아님")
+            return "내용 없음"
 
+        articles = data.get("Law", {}).get("article", [])
         if isinstance(articles, dict):
             articles = [articles]
 
