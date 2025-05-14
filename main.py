@@ -63,7 +63,13 @@ def get_law_id(law_name):
         res.raise_for_status()
         data = xmltodict.parse(res.text)
         law_entry = data.get("LawSearch", {}).get("law")
-        candidates = law_entry if isinstance(law_entry, list) else [law_entry]
+
+        if isinstance(law_entry, list):
+            candidates = [l for l in law_entry if isinstance(l, dict)]
+        elif isinstance(law_entry, dict):
+            candidates = [law_entry]
+        else:
+            candidates = []
 
         for law in candidates:
             law_id = law.get("법령ID")
@@ -117,7 +123,7 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                 return article.get("ArticleContent")
         return "내용 없음"
     except Exception as e:
-        print(f"[Parsing Error - 안전강화] {e}")
+        print(f"[Parsing Error - 최종 안정화] {e}")
         return "내용 없음"
 
 @app.get("/")
