@@ -1,9 +1,10 @@
-
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 import json
 import requests
+import xml.etree.ElementTree as ET
+from urllib.parse import quote
 
 app = FastAPI()
 
@@ -58,16 +59,47 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
 
         return {
             "source": "fallback",
+            "출처": "백업 데이터",
             "법령명": law_name,
             "조문": 조문_key,
             "항": 항_key or "",
             "호": 호_key or "",
             "내용": 내용,
-            "법령링크": f"https://www.law.go.kr/법령/학교폭력예방및대책에관한법률/{조문_key}"
+            "법령링크": f"https://www.law.go.kr/법령/{quote(law_name)}/{조문_key}"
         }
 
     except Exception:
         return None
+
+# law_name -> lawId 추출 함수 (XML 파싱)
+def get_law_id(law_name):
+    search_url = "https://www.law.go.kr/DRF/lawSearch.do"
+    params = {
+        "OC": "dyun204",
+        "target": "law",
+        "type": "XML",
+        "query": law_name
+    }
+    response = requests.get(search_url, params=params)
+    if response.status_code != 200:
+        return None
+    root = ET.fromstring(response.text)
+    law_id_element = root.find("law/lawId")
+    return law_id_element.text if law_id_element is not None else None
+
+# 조문 추출 함수
+def extract_clause_from_json(data, article_no, clause_no=None, subclause_no=None):
+    try:
+        article_key = f"제{article_no}조"
+        clauses = data.get("조문", {}).get(article_key)
+        if not clauses:
+            return "해당 조문 없음"
+
+        항 = clauses.get("항", {}).get(f"{clause_no}항") if clause_no else None
+        호 = 항.get("호", {}).get(f"{subclause_no}호") if 항 and subclause_no else None
+        return 호 or (항.get("내용") if 항 else None) or clauses.get("조문") or "내용 없음"
+    except:
+        return "내용 추출 오류"
 
 @app.get("/")
 def root():
@@ -81,36 +113,42 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None, description="호 번호")
 ):
     try:
-        # 실제 국가법령정보센터 API 호출 예시 (사용 시 수정 필요)
-        url = "https://api.law.go.kr/law"  # ← 실제 API 주소로 교체
+        law_id = get_law_id(law_name)
+        if not law_id:
+            raise ValueError("lawId 조회 실패")
+
+        detail_url = "https://www.law.go.kr/DRF/lawService.do"
         params = {
-            "OC": "dyun204",  # ← 실제 API 키
-            "law_name": law_name,
-            "article_no": article_no,
-            "clause_no": clause_no or "",
-            "subclause_no": subclause_no or ""
+            "OC": "dyun204",
+            "target": "law",
+            "type": "JSON",
+            "lawId": law_id
         }
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        api_result = response.json()
+        res = requests.get(detail_url, params=params)
+        res.raise_for_status()
+        data = res.json()
+
+        내용 = extract_clause_from_json(data, article_no, clause_no, subclause_no)
 
         return {
             "source": "api",
+            "출처": "실시간 API",
             "법령명": law_name,
             "조문": f"제{article_no}조",
             "항": clause_no or "",
             "호": subclause_no or "",
-            "내용": api_result.get("내용", "내용 없음"),
-            "법령링크": f"https://www.law.go.kr/법령/{law_name}/제{article_no}조"
+            "내용": 내용,
+            "법령링크": f"https://www.law.go.kr/법령/{quote(law_name)}/제{article_no}조"
         }
 
-    except Exception:
+    except Exception as e:
+        print(f"[API 호출 실패]: {e}")
         fallback = load_fallback(law_name, article_no, clause_no, subclause_no)
         if fallback:
             return fallback
         else:
             return {
-                "error": "API 호출 실패 및 fallback 데이터 없음",
+                "error": "API 호출 실패 및 fallback 없음",
                 "law_name": law_name,
                 "article_no": article_no,
                 "clause_no": clause_no or "",
