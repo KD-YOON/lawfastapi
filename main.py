@@ -95,50 +95,51 @@ def get_law_id(law_name):
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
+        law = data.get("Law")
+        if not isinstance(law, dict):
+            raise ValueError("⚠️ Law 항목이 dict가 아님")
 
-        if not isinstance(data, dict):
-            raise ValueError("⚠️ XML 파싱 결과가 dict 아님")
-        if "Law" not in data:
-            raise ValueError("⚠️ 'Law' 키가 존재하지 않음")
-
-        law = data["Law"]
-        articles = law.get("article", [])
+        articles = law.get("article")
         if isinstance(articles, str):
-            raise ValueError("⚠️ article이 문자열로 반환됨")
+            raise ValueError("⚠️ article이 str임")
         if isinstance(articles, dict):
             articles = [articles]
 
         for article in articles:
             if not isinstance(article, dict):
                 continue
-            if article.get("ArticleTitle") == f"제{article_no}조":
-                if clause_no:
-                    clauses = article.get("Paragraph", [])
-                    if isinstance(clauses, str):
-                        raise ValueError("⚠️ Paragraph가 문자열로 반환됨")
-                    if isinstance(clauses, dict):
-                        clauses = [clauses]
-                    for clause in clauses:
-                        if not isinstance(clause, dict):
-                            continue
-                        if clause.get("ParagraphNum") == clause_no:
-                            if subclause_no:
-                                subclauses = clause.get("SubParagraph", [])
-                                if isinstance(subclauses, str):
-                                    raise ValueError("⚠️ SubParagraph가 문자열로 반환됨")
-                                if isinstance(subclauses, dict):
-                                    subclauses = [subclauses]
-                                for sub in subclauses:
-                                    if not isinstance(sub, dict):
-                                        continue
-                                    if sub.get("SubParagraphNum") == subclause_no:
-                                        content = sub.get("SubParagraphContent")
-                                        if isinstance(content, str):
-                                            return content
-                                        elif isinstance(content, dict):
-                                            return content.get("#text", "내용 없음")
-                            return clause.get("ParagraphContent", "내용 없음")
-                return article.get("ArticleContent", "내용 없음")
+            if article.get("ArticleTitle") != f"제{article_no}조":
+                continue
+
+            if clause_no:
+                clauses = article.get("Paragraph")
+                if isinstance(clauses, str):
+                    raise ValueError("⚠️ Paragraph가 str임")
+                if isinstance(clauses, dict):
+                    clauses = [clauses]
+
+                for clause in clauses:
+                    if not isinstance(clause, dict):
+                        continue
+                    if clause.get("ParagraphNum") != clause_no:
+                        continue
+
+                    if subclause_no:
+                        subclauses = clause.get("SubParagraph")
+                        if isinstance(subclauses, str):
+                            raise ValueError("⚠️ SubParagraph가 str임")
+                        if isinstance(subclauses, dict):
+                            subclauses = [subclauses]
+
+                        for sub in subclauses:
+                            if not isinstance(sub, dict):
+                                continue
+                            if sub.get("SubParagraphNum") == subclause_no:
+                                return sub.get("SubParagraphContent", "내용 없음")
+
+                    return clause.get("ParagraphContent", "내용 없음")
+
+            return article.get("ArticleContent", "내용 없음")
 
         return "내용 없음"
 
