@@ -11,10 +11,8 @@ app = FastAPI(
 School LawBot API는 외부 법령 검색 기능을 위해 국가법령정보센터 API를 사용합니다. 
 이 서비스는 사용자의 개인정보를 수집하지 않으며, 법령 조문 검색만을 수행합니다.
 
-🔒 **개인정보보호방침**: https://kd-yoon.github.io/privacy-policy
-📄 **이용약관**: https://kd-yoon.github.io/terms
-
-✅ GPT에서 이 API를 호출하려면 위 두 정책 링크를 설정하고 '항상 허용'으로 승인해야 합니다.
+🔒 개인정보보호방침: https://kd-yoon.github.io/privacy-policy
+📄 이용약관: https://kd-yoon.github.io/terms
 """,
     version="1.0.0"
 )
@@ -59,29 +57,31 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
         print(f"[Fallback Error] {e}")
         return None
 
-# law_name → lawId 추출 개선
 def get_law_id(law_name):
-    search_url = "https://www.law.go.kr/DRF/lawSearch.do"
-    params = {
-        "OC": "dyun204",
-        "target": "law",
-        "type": "XML",
-        "query": law_name
-    }
-    res = requests.get(search_url, params=params)
-    res.raise_for_status()
-    data = xmltodict.parse(res.text)
-    law_entry = data.get("LawSearch", {}).get("law")
+    try:
+        search_url = "https://www.law.go.kr/DRF/lawSearch.do"
+        params = {
+            "OC": "dyun204",
+            "target": "law",
+            "type": "XML",
+            "query": law_name
+        }
+        res = requests.get(search_url, params=params)
+        res.raise_for_status()
+        data = xmltodict.parse(res.text)
+        law_entry = data.get("LawSearch", {}).get("law")
 
-    if isinstance(law_entry, list):
-        for law in law_entry:
-            if law.get("법령명") == law_name:
-                return law.get("lawId")
-    elif isinstance(law_entry, dict):
-        return law_entry.get("lawId")
-    return None
+        if isinstance(law_entry, list):
+            for law in law_entry:
+                if law.get("법령명") == law_name:
+                    return law.get("lawId")
+        elif isinstance(law_entry, dict):
+            return law_entry.get("lawId")
+        return None
+    except Exception as e:
+        print("[lawId 조회 오류]", e)
+        return None
 
-# 조문 내용 추출
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
@@ -108,15 +108,10 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                 return article.get("ArticleContent")
         return "내용 없음"
     except Exception as e:
-        print(f"[Parsing Error] {e}")
+        print("[XML 파싱 오류]", e)
         return "내용 추출 오류"
 
-@app.get("/")
-def root():
-    return {"message": "School LawBot API is running."}
-
 @app.api_route("/ping", methods=["GET", "HEAD"])
-
 def ping():
     return {"message": "pong"}
 
@@ -128,9 +123,9 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None, description="호 번호")
 ):
     try:
-        print("요청 수신됨:", law_name, article_no, clause_no, subclause_no)
+        print("📥 요청 수신됨:", law_name, article_no, clause_no, subclause_no)
         law_id = get_law_id(law_name)
-        print(f"law_id: {law_id}")
+        print(f"🔍 law_id: {law_id}")
         if not law_id:
             raise ValueError("lawId 조회 실패")
 
@@ -143,10 +138,10 @@ def get_law_clause(
         }
         res = requests.get(detail_url, params=params)
         res.raise_for_status()
-        print(f"lawService 응답 앞부분: {res.text[:300]}...")
+        print(f"📄 lawService 응답 앞부분:\n{res.text[:500]}")
 
         내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
-        print(f"최종 추출된 내용: {내용}")
+        print(f"✅ 최종 추출된 내용:\n{내용}")
 
         return {
             "source": "api",
@@ -160,7 +155,7 @@ def get_law_clause(
         }
 
     except Exception as e:
-        print(f"[API 오류] {e}")
+        print("🚨 [예외 발생]", e)
         fallback = load_fallback(law_name, article_no, clause_no, subclause_no)
         if fallback:
             return fallback
