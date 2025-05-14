@@ -5,21 +5,19 @@ import requests
 import xmltodict
 import json
 
-app = FastAPI(
-    title="School LawBot API",
-    description="""
-School LawBot API는 외부 법령 검색 기능을 위해 국가법령정보센터 API를 사용합니다. 
-이 서비스는 사용자의 개인정보를 수집하지 않으며, 법령 조문 검색만을 수행합니다.
-
-🔒 개인정보보호방침: https://kd-yoon.github.io/privacy-policy
-📄 이용약관: https://kd-yoon.github.io/terms
-""",
-    version="1.0.0"
-)
+app = FastAPI()
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
 
-# fallback 조회
+STATIC_LAW_IDS = {
+    "학교폭력예방법": "009620",
+    "학교폭력예방및대책에관한법률": "009620",
+    "학교폭력예방및대책에관한법률시행령": "0100921"
+}
+
+def normalize_law_name(law_name):
+    return law_name.replace(" ", "")
+
 def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
     try:
         with open(FALLBACK_FILE, "r", encoding="utf-8") as f:
@@ -57,27 +55,19 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
         print(f"[Fallback Error] {e}")
         return None
 
-STATIC_LAW_IDS = {
-    "학교폭력예방법": "009620",
-    "학교폭력예방및대책에관한법률": "009620",
-    "학교폭력예방및대책에관한법률시행령": "0100921"
-}
-
-def normalize_law_name(law_name):
-    return law_name.replace(" ", "")
-
 def get_law_id(law_name):
     normalized = normalize_law_name(law_name)
     if normalized in STATIC_LAW_IDS:
         print(f"✅ 고정 law_id 사용: {STATIC_LAW_IDS[normalized]}")
         return STATIC_LAW_IDS[normalized]
+
     try:
         search_url = "https://www.law.go.kr/DRF/lawSearch.do"
         params = {
             "OC": "dyun204",
             "target": "law",
             "type": "XML",
-            "query": normalize_law_name(law_name)
+            "query": normalized
         }
         res = requests.get(search_url, params=params)
         res.raise_for_status()
@@ -88,19 +78,16 @@ def get_law_id(law_name):
 
         if isinstance(law_entry, list):
             for law in law_entry:
-    if law is None:
-        continue
-    print(" -", law.get("법령명"))
-    if normalized in law.get("법령명", ""):
-        return law.get("lawId")
+                if law is None:
+                    continue
+                print(" -", law.get("법령명"))
+                if normalized in law.get("법령명", ""):
+                    return law.get("lawId")
         elif isinstance(law_entry, dict):
             print(" -", law_entry.get("법령명"))
-            if law_name in law_entry.get("법령명", ""):
+            if normalized in law_entry.get("법령명", ""):
                 return law_entry.get("lawId")
 
-        return None
-    except Exception as e:
-        print("[lawId 조회 오류]", e)
         return None
     except Exception as e:
         print("[lawId 조회 오류]", e)
@@ -110,6 +97,7 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
     try:
         data = xmltodict.parse(xml_text)
         articles = data.get("Law", {}).get("article", [])
+
         if isinstance(articles, dict):
             articles = [articles]
 
@@ -132,12 +120,12 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                 return article.get("ArticleContent")
         return "내용 없음"
     except Exception as e:
-        print("[XML 파싱 오류]", e)
+        print(f"[Parsing Error] {e}")
         return "내용 추출 오류"
 
-@app.api_route("/ping", methods=["GET", "HEAD"])
-def ping():
-    return {"message": "pong"}
+@app.get("/")
+def root():
+    return {"message": "School LawBot API is running."}
 
 @app.get("/law")
 def get_law_clause(
@@ -147,9 +135,10 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None, description="호 번호")
 ):
     try:
-        print("📥 요청 수신됨:", law_name, article_no, clause_no, subclause_no)
+        print(f"📥 요청 수신됨: {law_name} {article_no} {clause_no} {subclause_no}")
         law_id = get_law_id(law_name)
         print(f"🔍 law_id: {law_id}")
+
         if not law_id:
             raise ValueError("lawId 조회 실패")
 
@@ -162,10 +151,10 @@ def get_law_clause(
         }
         res = requests.get(detail_url, params=params)
         res.raise_for_status()
-        print(f"📄 lawService 응답 앞부분:\n{res.text[:500]}")
+        print(f"📄 lawService 응답 앞부분: {res.text[:100]}...")
 
         내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
-        print(f"✅ 최종 추출된 내용:\n{내용}")
+        print(f"✅ 최종 추출된 내용: {내용[:80] if 내용 else '없음'}")
 
         return {
             "source": "api",
@@ -179,7 +168,7 @@ def get_law_clause(
         }
 
     except Exception as e:
-        print("🚨 [예외 발생]", e)
+        print(f"🚨 [예외 발생] {e}")
         fallback = load_fallback(law_name, article_no, clause_no, subclause_no)
         if fallback:
             return fallback
