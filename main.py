@@ -8,6 +8,12 @@ import json
 app = FastAPI()
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
+OC_KEY = "dyun204"
+
+@app.get("/ping")
+@app.head("/ping")
+async def ping():
+    return {"status": "ok"}
 
 def normalize_law_name(law_name):
     return law_name.replace(" ", "")
@@ -41,7 +47,7 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
             "조문": article_key,
             "항": clause_key or "",
             "호": subclause_key or "",
-            "내용": 내용,
+            "내용": 내용 or "내용이 없습니다.",
             "법령링크": f"https://www.law.go.kr/법령/{quote(law_name)}/{article_key}"
         }
 
@@ -54,7 +60,7 @@ def get_law_id(law_name):
     try:
         search_url = "https://www.law.go.kr/DRF/lawSearch.do"
         params = {
-            "OC": "dyun204",
+            "OC": OC_KEY,
             "target": "law",
             "type": "XML",
             "query": normalized
@@ -62,29 +68,17 @@ def get_law_id(law_name):
         res = requests.get(search_url, params=params)
         res.raise_for_status()
         data = xmltodict.parse(res.text)
-        law_entry = data.get("LawSearch", {}).get("law")
+        law_entries = data.get("LawSearch", {}).get("laws", {}).get("law", [])
 
-        if isinstance(law_entry, list):
-            candidates = [l for l in law_entry if isinstance(l, dict)]
-        elif isinstance(law_entry, dict):
-            candidates = [law_entry]
-        else:
-            candidates = []
+        if isinstance(law_entries, dict):
+            law_entries = [law_entries]
 
-        for law in candidates:
-            law_id = law.get("법령ID")
-            if not law_id:
-                continue
-            detail_url = "https://www.law.go.kr/DRF/lawService.do"
-            check_params = {
-                "OC": "dyun204",
-                "target": "law",
-                "type": "XML",
-                "lawId": law_id
-            }
-            detail_res = requests.get(detail_url, params=check_params)
-            if "요청하신 법령이 없습니다" not in detail_res.text:
-                return law_id
+        for law in law_entries:
+            if (
+                law.get("현행연혁코드") == "현행"
+                and law.get("법령명한글", "").strip() == law_name.strip()
+            ):
+                return law.get("법령ID")
 
         return None
     except Exception as e:
@@ -94,13 +88,9 @@ def get_law_id(law_name):
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
+        law = data.get("Law", {})
+        articles = law.get("article", [])
 
-        if not isinstance(data, dict):
-            raise ValueError("⚠️ XML 파싱 결과가 dict 아님")
-        if "Law" not in data:
-            raise ValueError("⚠️ 'Law' 키가 존재하지 않음")
-
-        articles = data["Law"].get("article", [])
         if isinstance(articles, dict):
             articles = [articles]
 
@@ -118,9 +108,13 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                                     subclauses = [subclauses]
                                 for sub in subclauses:
                                     if sub.get("SubParagraphNum") == subclause_no:
-                                        return sub.get("SubParagraphContent")
-                            return clause.get("ParagraphContent")
-                return article.get("ArticleContent")
+                                        content = sub.get("SubParagraphContent")
+                                        if isinstance(content, str):
+                                            return content
+                                        elif isinstance(content, dict):
+                                            return content.get("#text", "내용 없음")
+                            return clause.get("ParagraphContent", "내용 없음")
+                return article.get("ArticleContent", "내용 없음")
         return "내용 없음"
     except Exception as e:
         print(f"[Parsing Error - 최종 안정화] {e}")
@@ -147,7 +141,7 @@ def get_law_clause(
 
         detail_url = "https://www.law.go.kr/DRF/lawService.do"
         params = {
-            "OC": "dyun204",
+            "OC": OC_KEY,
             "target": "law",
             "type": "XML",
             "lawId": law_id
