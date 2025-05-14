@@ -91,8 +91,8 @@ def get_law_id(law_name):
         if law is None:
             continue
         print(" -", law.get("법령명"))
-                if law_name in law.get("법령명", ""):
-                    return law.get("lawId")
+        if normalized in law.get("법령명", ""):
+            return law.get("lawId")
         elif isinstance(law_entry, dict):
             print(" -", law_entry.get("법령명"))
             if law_name in law_entry.get("법령명", ""):
