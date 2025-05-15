@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="3.6.3"
+    version="3.6.4"
 )
 
 app.add_middleware(
@@ -104,16 +104,22 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
             for clause in clauses:
                 if clause_no is None or clause.get("ParagraphNum") == clause_no:
                     subclauses = clause.get("SubParagraph")
+
                     if subclause_no:
                         if not subclauses:
                             return "요청한 호가 존재하지 않습니다."
+
                         if isinstance(subclauses, dict):
                             subclauses = [subclauses]
-                        for sub in subclauses:
-                            if sub.get("SubParagraphNum") == subclause_no:
-                                return sub.get("SubParagraphContent", "내용 없음")
+
+                        if isinstance(subclauses, list):
+                            for sub in subclauses:
+                                if sub.get("SubParagraphNum") == subclause_no:
+                                    return sub.get("SubParagraphContent", "내용 없음")
                         return "요청한 호를 찾을 수 없습니다."
+
                     return clause.get("ParagraphContent", "내용 없음")
+
             return "요청한 항을 찾을 수 없습니다."
         return "요청한 조문을 찾을 수 없습니다."
     except Exception as e:
