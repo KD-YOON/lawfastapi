@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="3.6.0"
+    version="3.6.1"
 )
 
 app.add_middleware(
@@ -117,10 +117,8 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                             subclauses = [subclauses]
 
                         for sub in subclauses:
-                            # 일반 구조
                             num = sub.get("SubParagraphNum") or sub.get("@SubParagraphNum")
                             content = sub.get("SubParagraphContent") or sub.get("#text")
-
                             if num == subclause_no:
                                 return content or "내용 없음"
 
@@ -143,8 +141,12 @@ def get_law_clause(
     law_name: str = Query(..., example="학교폭력예방법"),
     article_no: str = Query(..., example="16"),
     clause_no: Optional[str] = Query(None, example="1"),
-    subclause_no: Optional[str] = Query(None, example="2")
+    subclause_no: Optional[str] = Query(None, example="2"),
+    api_key: str = Query(..., description="GPTs에서 전달되는 API 키")
 ):
+    global OC_KEY
+    OC_KEY = api_key  # 🔑 GPTs용 api_key를 내부에서 사용하는 OC_KEY에 연결
+
     try:
         print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
         law_name = resolve_full_law_name(law_name)
