@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="4.2.0-debug"
+    version="4.3.0-hangul"
 )
 
 app.add_middleware(
@@ -43,7 +43,7 @@ def ping():
 def privacy_policy():
     return {
         "message": "본 서비스의 개인정보 처리방침은 다음 링크에서 확인할 수 있습니다.",
-        "url": "https://YOURDOMAIN.com/privacy-policy"  # 실제 정책 URL로 교체
+        "url": "https://YOURDOMAIN.com/privacy-policy"
     }
 
 def resolve_full_law_name(law_name: str) -> str:
@@ -70,7 +70,7 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
         if DEBUG_MODE:
             print(f"[DEBUG] lawSearch 응답 키 목록: {list(data.keys())}")
             print("[DEBUG] lawSearch 응답 일부:", str(res.text)[:300])
-        law_root = data.get("LawSearch") or data.get("lawSearch") or {}
+        law_root = data.get("Law") or data.get("법령") or {}
         laws = law_root.get("laws", {}).get("law") or law_root.get("law")
         if not laws:
             print("[DEBUG] ❌ law 리스트가 비어 있음")
@@ -96,11 +96,10 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
     try:
         data = xmltodict.parse(xml_text)
-        articles = (
-            data.get("Law", {}).get("조문")
-            or data.get("조문")
-        )
-        print("[DEBUG] 받은 articles 원본:", articles)
+        law_dict = data.get("법령", {})
+        print("[DEBUG] law_dict keys:", list(law_dict.keys()))
+        articles = law_dict.get("조문", {}).get("조문단위") if law_dict.get("조문") else None
+        print("[DEBUG] articles (조문단위):", articles)
         if not articles:
             print("[DEBUG] articles가 None 또는 비어 있음")
             return "조문 정보가 존재하지 않습니다."
@@ -109,43 +108,37 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
         for article in articles:
             art_num = article.get("조문번호")
             print(f"[DEBUG] 현재 art_num: {art_num} / 요청 article_no: {article_no}")
-            if art_num and art_num.startswith(f"제{article_no}조"):
+            if art_num == str(article_no):
+                # 항 파싱
                 clauses = article.get("항")
-                print("[DEBUG] 해당 조문의 clauses:", clauses)
+                print("[DEBUG] clauses:", clauses)
                 if not clause_no:
-                    print("[DEBUG] 항 파라미터 없음, 조문내용 반환:", article.get("조문내용"))
-                    return article.get("조문내용") or "내용 없음"
+                    return article.get("조문내용", "내용 없음")
                 if not clauses:
-                    print("[DEBUG] 요청한 항이 없음")
                     return "요청한 항을 찾을 수 없습니다."
                 if isinstance(clauses, dict):
                     clauses = [clauses]
                 for clause in clauses:
-                    clause_num = clause.get("항번호")
+                    clause_num = clause.get("항번호", "").strip()
                     clause_num_arabic = circled_nums.get(clause_num, clause_num)
-                    print(f"[DEBUG] 현재 clause_num: {clause_num} → {clause_num_arabic} / 요청 clause_no: {clause_no}")
-                    if (clause_num_arabic == str(clause_no)) or (clause_num == str(clause_no)):
+                    print(f"[DEBUG] 현재 clause_num: {clause_num}({clause_num_arabic}) / 요청 clause_no: {clause_no}")
+                    if clause_num_arabic == str(clause_no) or clause_num == str(clause_no):
+                        # 호 파싱
                         if not subclause_no:
-                            print("[DEBUG] 호 파라미터 없음, 항내용 반환:", clause.get("항내용"))
-                            return clause.get("항내용") or "내용 없음"
+                            return clause.get("항내용", "내용 없음")
                         subclauses = clause.get("호")
-                        print("[DEBUG] 해당 항의 subclauses:", subclauses)
+                        print("[DEBUG] subclauses (호):", subclauses)
                         if not subclauses:
-                            print("[DEBUG] 요청한 호가 없음")
                             return "요청한 호를 찾을 수 없습니다."
                         if isinstance(subclauses, dict):
                             subclauses = [subclauses]
                         for sub in subclauses:
-                            sub_num = sub.get("호번호")
+                            sub_num = sub.get("호번호", "").strip()
                             print(f"[DEBUG] 현재 sub_num: {sub_num} / 요청 subclause_no: {subclause_no}")
                             if sub_num == str(subclause_no):
-                                print("[DEBUG] 호내용 반환:", sub.get("호내용"))
-                                return sub.get("호내용") or "내용 없음"
-                        print("[DEBUG] 모든 호에서 매칭 실패")
+                                return sub.get("호내용", "내용 없음")
                         return "요청한 호를 찾을 수 없습니다."
-                print("[DEBUG] 모든 항에서 매칭 실패")
                 return "요청한 항을 찾을 수 없습니다."
-        print("[DEBUG] 모든 조문에서 매칭 실패")
         return "요청한 조문을 찾을 수 없습니다."
     except Exception as e:
         print("[Parsing Error]", e)
@@ -184,11 +177,11 @@ def get_law_clause(
             "source": "api",
             "출처": "lawService",
             "법령명": law_name_full,
-            "조문": f"제{article_no}조",
+            "조문": f"{article_no}조",
             "항": f"{clause_no}항" if clause_no else "",
             "호": f"{subclause_no}호" if subclause_no else "",
             "내용": 내용,
-            "법령링크": f"https://www.law.go.kr/법령/{quote(law_name_full, safe='')}/제{article_no}조"
+            "법령링크": f"https://www.law.go.kr/법령/{quote(law_name_full, safe='')}/{article_no}조"
         })
     except Exception as e:
         print("🚨 API 에러:", e)
