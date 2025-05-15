@@ -101,11 +101,11 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                 continue
 
             clauses = article.get("Paragraph")
-            if not clauses:
-                return article.get("ArticleContent", "해당 조문에 항 정보가 없습니다.")
+          if not clauses:
+    return article.get("ArticleContent", "내용 없음")
 
-            if isinstance(clauses, dict):
-                clauses = [clauses]
+if isinstance(clauses, dict):
+    clauses = [clauses]
 
             for clause in clauses:
                 if clause_no is None or clause.get("ParagraphNum") == clause_no:
