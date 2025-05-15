@@ -9,13 +9,12 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="학교폭력예방법 등 실시간 API 또는 fallback JSON을 통한 조문 조회 서비스",
-    version="1.1.1"
+    version="1.1.2"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
 OC_KEY = "dyun204"
 
-# 약칭 자동 변환
 KNOWN_LAWS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
     "개인정보보호법": "개인정보 보호법"
@@ -31,6 +30,10 @@ def normalize_law_name(law_name):
 @app.head("/ping")
 async def ping():
     return {"status": "ok"}
+
+@app.get("/")
+def home():
+    return {"message": "School LawBot API is live. Use /docs to test the endpoints."}
 
 def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
     try:
@@ -114,7 +117,6 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
             if article.get("ArticleTitle") != f"제{article_no}조":
                 continue
 
-            # 1️⃣ 항과 호가 존재하는 경우
             if clause_no and "Paragraph" in article:
                 clauses = article.get("Paragraph")
                 if isinstance(clauses, dict): clauses = [clauses]
@@ -129,7 +131,7 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                                 return sub.get("SubParagraphContent", "내용 없음")
                     return clause.get("ParagraphContent", "내용 없음")
 
-            # 2️⃣ 항이 없거나 조문 전체만 있는 경우
+            # 항이 없거나 파싱 실패 시 ArticleContent fallback
             if "ArticleContent" in article:
                 return article.get("ArticleContent", "내용 없음")
 
@@ -154,12 +156,13 @@ def get_law_clause(
         if not law_id:
             raise ValueError("lawId 조회 실패")
 
+        # ✅ 핵심 수정: 반드시 ID= 로 전달
         detail_url = "https://www.law.go.kr/DRF/lawService.do"
         params = {
             "OC": OC_KEY,
             "target": "law",
             "type": "XML",
-            "lawId": law_id
+            "ID": law_id  # 핵심 수정 포인트!
         }
         res = requests.get(detail_url, params=params)
         res.raise_for_status()
