@@ -9,7 +9,7 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="학교폭력예방법 등 실시간 API 또는 fallback JSON을 통한 조문 조회 서비스",
-    version="1.1.2"
+    version="1.1.3"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
@@ -163,9 +163,13 @@ def get_law_clause(
             "ID": law_id
         }
         res = requests.get(detail_url, params=params)
+
+        # ✅ 응답 상태 로그 추가
+        print("[lawService 응답 status_code]", res.status_code)
+
         res.raise_for_status()
 
-        # ✅ 디버깅 로그 추가
+        # ✅ 응답 본문 디버깅 로그 추가
         print("[lawService 응답 구조 디버깅]", res.text[:500])
 
         내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
