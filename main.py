@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="3.3.3"
+    version="3.3.4"
 )
 
 app.add_middleware(
@@ -21,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OC_KEY = os.getenv("OC_KEY")  # Render 환경변수에서 가져오는 실제 키
+OC_KEY = os.getenv("OC_KEY")  # Render 환경변수: OC_KEY
 
 DEBUG_MODE = True
 
@@ -75,31 +75,29 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
             if article.get("ArticleTitle") != f"제{article_no}조":
                 continue
 
-            # 항 처리
-            if clause_no:
-                clauses = article.get("Paragraph")
-                if not clauses:
-                    return "요청한 항이 존재하지 않습니다."
-                if isinstance(clauses, dict):
-                    clauses = [clauses]
-                for clause in clauses:
-                    if clause.get("ParagraphNum") == clause_no:
-                        # 호 처리
-                        if subclause_no:
-                            subclauses = clause.get("SubParagraph")
-                            if not subclauses:
-                                return "요청한 호가 존재하지 않습니다."
-                            if isinstance(subclauses, dict):
-                                subclauses = [subclauses]
-                            for sub in subclauses:
-                                if sub.get("SubParagraphNum") == subclause_no:
-                                    return sub.get("SubParagraphContent", "내용 없음")
-                            return "요청한 호를 찾을 수 없습니다."
-                        return clause.get("ParagraphContent", "내용 없음")
-                return "요청한 항을 찾을 수 없습니다."
+            clauses = article.get("Paragraph")
 
-            # 항 없음 = 조문 전체 반환
-            return article.get("ArticleContent", "내용 없음")
+            # ✅ 항이 없을 경우 fallback으로 조문 전체 반환
+            if not clauses:
+                return article.get("ArticleContent", "내용 없음")
+
+            if isinstance(clauses, dict):
+                clauses = [clauses]
+
+            for clause in clauses:
+                if clause.get("ParagraphNum") == clause_no:
+                    subclauses = clause.get("SubParagraph")
+                    if subclause_no:
+                        if not subclauses:
+                            return "요청한 호가 존재하지 않습니다."
+                        if isinstance(subclauses, dict):
+                            subclauses = [subclauses]
+                        for sub in subclauses:
+                            if sub.get("SubParagraphNum") == subclause_no:
+                                return sub.get("SubParagraphContent", "내용 없음")
+                        return "요청한 호를 찾을 수 없습니다."
+                    return clause.get("ParagraphContent", "내용 없음")
+            return "요청한 항을 찾을 수 없습니다."
 
         return "요청한 조문을 찾을 수 없습니다."
     except Exception as e:
