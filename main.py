@@ -9,7 +9,7 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="학교폭력예방법 등 실시간 API 또는 fallback JSON을 통한 조문 조회 서비스",
-    version="1.4.0"
+    version="1.4.1"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
@@ -105,9 +105,12 @@ def get_law_id(law_name):
         print("[lawId 자동 판별 오류]", e)
         return None
 
-# ✅ 현행법만 허용: 시행 예정 조문 필터링
+# ✅ 시행예정 조문 필터링 및 XML 원문 출력 추가
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
+        print("📦 lawService 응답 원문 일부 ↓↓↓")
+        print(xml_text[:1000])  # XML 내용 일부 출력
+
         data = xmltodict.parse(xml_text)
 
         if "조문시행일자조회결과" in data:
