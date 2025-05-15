@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from urllib.parse import quote
 import requests
@@ -9,10 +10,17 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="법령정보 DRF API 기반 조문, 항, 호 조회 서비스",
-    version="3.3.0"
+    version="3.3.1"
 )
 
-FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 OC_KEY = "dyun204"
 DEBUG_MODE = True
 
@@ -30,41 +38,36 @@ def normalize_law_name(law_name):
 def get_law_id(law_name):
     normalized = normalize_law_name(law_name)
     try:
-        search_url = "https://www.law.go.kr/DRF/lawSearch.do"
         params = {
             "OC": OC_KEY,
             "target": "law",
             "type": "XML",
             "query": law_name
         }
-        res = requests.get(search_url, params=params)
+        res = requests.get("https://www.law.go.kr/DRF/lawSearch.do", params=params)
         res.raise_for_status()
         data = xmltodict.parse(res.text)
-
-        law_entries = data.get("LawSearch", {}).get("laws", {}).get("law")
-        if not law_entries:
-            law_entries = data.get("LawSearch", {}).get("law", [])
-        if isinstance(law_entries, dict):
-            law_entries = [law_entries]
-
-        for law in law_entries:
-            if law.get("현행연혁코드") != "현행":
-                continue
-            for field in ["법령명한글", "법령약칭명", "법령명"]:
-                if normalize_law_name(law.get(field, "")) == normalized:
-                    return law.get("법령ID")
+        laws = data.get("LawSearch", {}).get("laws", {}).get("law") or data.get("LawSearch", {}).get("law")
+        if not laws:
+            return None
+        if isinstance(laws, dict):
+            laws = [laws]
+        for law in laws:
+            if law.get("현행연혁코드") == "현행":
+                for field in ["법령명한글", "법령약칭명", "법령명"]:
+                    if normalize_law_name(law.get(field, "")) == normalized:
+                        return law.get("법령ID")
         return None
     except Exception as e:
         if DEBUG_MODE:
             print("[lawId 오류]", e)
         return None
 
-def extract_article(xml_text, article_no: str, clause_no: Optional[str], subclause_no: Optional[str]):
+def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
         law = data.get("Law", {})
         articles = law.get("article")
-
         if isinstance(articles, dict):
             articles = [articles]
 
@@ -72,7 +75,6 @@ def extract_article(xml_text, article_no: str, clause_no: Optional[str], subclau
             if article.get("ArticleTitle") != f"제{article_no}조":
                 continue
 
-            # 항 요청이 있을 경우
             if clause_no:
                 clauses = article.get("Paragraph")
                 if not clauses:
@@ -94,29 +96,28 @@ def extract_article(xml_text, article_no: str, clause_no: Optional[str], subclau
                         return clause.get("ParagraphContent", "내용 없음")
                 return "요청한 항을 찾을 수 없습니다."
 
-            # 항이 없으면 조문 내용
             return article.get("ArticleContent", "내용 없음")
 
         return "요청한 조문을 찾을 수 없습니다."
     except Exception as e:
         if DEBUG_MODE:
-            print(f"[Parsing Error] {e}")
+            print("[Parsing Error]", e)
         return "내용 없음"
 
 @app.get("/law", summary="법령 조문 조회")
 def get_law_clause(
     law_name: str = Query(..., example="학교폭력예방법"),
     article_no: str = Query(..., example="16"),
-    clause_no: Optional[str] = Query(None, example="1"),
-    subclause_no: Optional[str] = Query(None, example="2")
+    clause_no: Optional[str] = Query(None),
+    subclause_no: Optional[str] = Query(None)
 ):
     try:
-        print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
+        if DEBUG_MODE:
+            print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
         law_name = resolve_full_law_name(law_name)
         law_id = get_law_id(law_name)
-
         if not law_id:
-            return JSONResponse(content={"error": "법령 ID를 찾을 수 없습니다."}, status_code=404)
+            return JSONResponse(content={"error": "법령 ID 조회 실패"}, status_code=404)
 
         res = requests.get(
             "https://www.law.go.kr/DRF/lawService.do",
@@ -133,7 +134,7 @@ def get_law_clause(
 
         return JSONResponse(content={
             "source": "api",
-            "출처": "lawService.do",
+            "출처": "lawService",
             "법령명": law_name,
             "조문": f"제{article_no}조",
             "항": f"{clause_no}항" if clause_no else "",
@@ -144,11 +145,5 @@ def get_law_clause(
 
     except Exception as e:
         if DEBUG_MODE:
-            print(f"🚨 API 예외: {e}")
-        return JSONResponse(content={
-            "error": "API 호출 실패",
-            "law_name": law_name,
-            "article_no": article_no,
-            "clause_no": clause_no or "",
-            "subclause_no": subclause_no or ""
-        }, status_code=500)
+            print("🚨 API 에러:", e)
+        return JSONResponse(content={"error": "API 호출 실패"}, status_code=500)
