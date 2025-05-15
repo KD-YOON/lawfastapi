@@ -9,7 +9,7 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="학교폭력예방법 등 실시간 API 또는 fallback JSON을 통한 조문 조회 서비스",
-    version="1.1.0"
+    version="1.1.1"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
@@ -76,7 +76,7 @@ def get_law_id(law_name):
             "OC": OC_KEY,
             "target": "law",
             "type": "XML",
-            "query": law_name  # 원본 이름으로 전송
+            "query": law_name
         }
         res = requests.get(search_url, params=params)
         res.raise_for_status()
@@ -114,20 +114,24 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
             if article.get("ArticleTitle") != f"제{article_no}조":
                 continue
 
-            if clause_no:
+            # 1️⃣ 항과 호가 존재하는 경우
+            if clause_no and "Paragraph" in article:
                 clauses = article.get("Paragraph")
                 if isinstance(clauses, dict): clauses = [clauses]
                 for clause in clauses:
                     if clause.get("ParagraphNum") != clause_no:
                         continue
-                    if subclause_no:
+                    if subclause_no and "SubParagraph" in clause:
                         subclauses = clause.get("SubParagraph")
-                        if isinstance(subclause, dict): subclauses = [subclause]
+                        if isinstance(subclauses, dict): subclauses = [subclauses]
                         for sub in subclauses:
                             if sub.get("SubParagraphNum") == subclause_no:
                                 return sub.get("SubParagraphContent", "내용 없음")
                     return clause.get("ParagraphContent", "내용 없음")
-            return article.get("ArticleContent", "내용 없음")
+
+            # 2️⃣ 항이 없거나 조문 전체만 있는 경우
+            if "ArticleContent" in article:
+                return article.get("ArticleContent", "내용 없음")
 
         return "내용 없음"
     except Exception as e:
