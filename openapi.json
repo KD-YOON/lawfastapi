@@ -1,9 +1,9 @@
 {
-  "openapi": "3.0.0",
+  "openapi": "3.1.0",
   "info": {
     "title": "School LawBot API",
     "version": "1.0.0",
-    "description": "약칭 자동 변환 + 국가법령정보센터 API 실시간 연결"
+    "description": "법령명, 조문, 항, 호를 기반으로 국가법령정보센터에서 실시간 조문 정보를 조회합니다. GPTs Actions 용으로 구성되어 있습니다."
   },
   "servers": [
     {
@@ -11,80 +11,17 @@
     }
   ],
   "paths": {
-    "/": {
-      "get": {
-        "summary": "Root",
-        "description": "API 정보 및 가이드 제공",
-        "operationId": "root_get",
-        "responses": {
-          "200": {
-            "description": "API 설명 응답",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "message": {
-                      "type": "string"
-                    },
-                    "guide": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/law": {
       "get": {
-        "summary": "Get Law ID",
-        "description": "법령명 또는 약칭으로 실시간 법령 ID 검색",
-        "operationId": "get_law",
+        "operationId": "getLawClause",
+        "summary": "법령 조문 조회",
+        "description": "법령명, 조문 번호, 항 번호, 호 번호를 입력받아 국가법령정보센터에서 해당 법령 내용을 조회합니다.",
         "parameters": [
           {
             "name": "law_name",
             "in": "query",
             "required": true,
-            "description": "법령명 또는 약칭",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "법령 정보",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "law_name": { "type": "string" },
-                    "law_id": { "type": "string" },
-                    "matched_from": { "type": "string" },
-                    "source": { "type": "string" }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/clause": {
-      "get": {
-        "summary": "Get Clause",
-        "description": "법령명, 조문 번호, 항 번호로 실시간 조문 내용 조회",
-        "operationId": "get_clause",
-        "parameters": [
-          {
-            "name": "law_name",
-            "in": "query",
-            "required": true,
-            "description": "법령명 또는 약칭",
+            "description": "법령명 또는 약칭 (예: 학교폭력예방법)",
             "schema": {
               "type": "string"
             }
@@ -93,7 +30,7 @@
             "name": "article_no",
             "in": "query",
             "required": true,
-            "description": "조문 번호 (예: 제16조)",
+            "description": "조문 번호 (예: 16)",
             "schema": {
               "type": "string"
             }
@@ -101,16 +38,35 @@
           {
             "name": "clause_no",
             "in": "query",
-            "required": true,
-            "description": "항 번호 (예: 제1항)",
+            "required": false,
+            "description": "항 번호 (예: 1)",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "subclause_no",
+            "in": "query",
+            "required": false,
+            "description": "호 번호 (예: 2)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "api_key",
+            "in": "query",
+            "description": "API 키",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["YOUR_REAL_SERPAPI_API_KEY"]
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "조문 항 응답",
+            "description": "조문 정보 조회 성공",
             "content": {
               "application/json": {
                 "schema": {
@@ -119,16 +75,32 @@
                     "법령명": { "type": "string" },
                     "조문": { "type": "string" },
                     "항": { "type": "string" },
+                    "호": { "type": "string" },
                     "내용": { "type": "string" },
-                    "matched_from": { "type": "string" },
-                    "source": { "type": "string" }
-                  }
+                    "법령링크": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": ["법령명", "조문", "내용"]
                 }
               }
             }
+          },
+          "400": {
+            "description": "잘못된 요청입니다."
+          },
+          "401": {
+            "description": "인증 실패 - API 키 오류"
+          },
+          "500": {
+            "description": "서버 내부 오류"
           }
         }
       }
     }
+  },
+  "components": {
+    "schemas": {}
   }
 }
