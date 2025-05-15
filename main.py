@@ -9,7 +9,7 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="학교폭력예방법 등 실시간 API 또는 fallback JSON을 통한 조문 조회 서비스",
-    version="1.3.1"
+    version="1.4.0"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
@@ -71,7 +71,6 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
         print(f"[Fallback Error] {e}")
         return None
 
-# ✅ 개선된 get_law_id with 비교 대상 출력
 def get_law_id(law_name):
     normalized = normalize_law_name(law_name)
     try:
@@ -86,8 +85,6 @@ def get_law_id(law_name):
         res.raise_for_status()
         data = xmltodict.parse(res.text)
 
-        print("[lawSearch 응답 구조 디버깅]", res.text[:500])
-
         law_entries = data.get("LawSearch", {}).get("laws", {}).get("law")
         if not law_entries:
             law_entries = data.get("LawSearch", {}).get("law", [])
@@ -97,27 +94,27 @@ def get_law_id(law_name):
         for law in law_entries:
             if law.get("현행연혁코드") != "현행":
                 continue
-
             for field in ["법령명한글", "법령약칭명", "법령명"]:
                 print(f"🔍 비교 대상: {field} → {law.get(field)}")
                 if normalize_law_name(law.get(field, "")) == normalized:
                     print(f"✅ 법령명 일치: {law.get(field)} → ID: {law.get('법령ID')}")
                     return law.get("법령ID")
-
         print("❌ 일치하는 법령명 없음")
         return None
     except Exception as e:
         print("[lawId 자동 판별 오류]", e)
         return None
 
-# ✅ 시행 예정 조문 대응
+# ✅ 현행법만 허용: 시행 예정 조문 필터링
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
 
         if "조문시행일자조회결과" in data:
             시행일 = data["조문시행일자조회결과"].get("조문시행일자", "시행 예정일 정보 없음")
-            return f"이 조문은 아직 시행되지 않았습니다. 시행일자: {시행일}"
+            안내문 = f"[현행법 아님] 이 조문은 아직 시행되지 않았습니다. 시행일자: {시행일}"
+            print(f"🕓 시행예정 조문 → 거부: {안내문}")
+            return 안내문
 
         if "LawService" in data or "Law" not in data:
             raise ValueError("법령 없음 또는 구조 이상")
