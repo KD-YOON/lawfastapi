@@ -9,7 +9,7 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="법령정보 DRF API 기반 조문, 항, 호 조회 서비스",
-    version="3.2.0"
+    version="3.2.1"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
@@ -74,23 +74,31 @@ def extract_article(xml_text, article_no: str, clause_no: Optional[str], subclau
             if article.get("ArticleTitle") != f"제{article_no}조":
                 continue
 
-            # 항 존재
+            # clause 요청 시
             if clause_no:
                 clauses = article.get("Paragraph")
+                if not clauses:
+                    return "요청한 항이 존재하지 않습니다."
                 if isinstance(clauses, dict):
                     clauses = [clauses]
+
                 for clause in clauses:
                     if clause.get("ParagraphNum") == clause_no:
                         if subclause_no:
                             subclauses = clause.get("SubParagraph")
+                            if not subclauses:
+                                return "요청한 호가 존재하지 않습니다."
                             if isinstance(subclauses, dict):
                                 subclauses = [subclauses]
                             for sub in subclauses:
                                 if sub.get("SubParagraphNum") == subclause_no:
                                     return sub.get("SubParagraphContent", "내용 없음")
+                            return "요청한 호가 존재하지 않습니다."
                         return clause.get("ParagraphContent", "내용 없음")
 
-            # 항이 없거나 요청 안한 경우
+                return "요청한 항이 존재하지 않습니다."
+
+            # clause_no 없을 때
             return article.get("ArticleContent", "내용 없음")
 
         return "요청한 조문을 찾을 수 없습니다."
