@@ -9,8 +9,8 @@ import os
 
 app = FastAPI(
     title="School LawBot API",
-    description="법령정보 DRF API 기반 조문, 항, 호 조회 서비스",
-    version="3.3.2"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
+    version="3.3.3"
 )
 
 app.add_middleware(
@@ -21,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OC_KEY = os.getenv("OC_KEY")  # ✅ Render에 설정된 환경변수 이름과 일치
+OC_KEY = os.getenv("OC_KEY")  # Render 환경변수에서 가져오는 실제 키
 
 DEBUG_MODE = True
 
@@ -75,6 +75,7 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
             if article.get("ArticleTitle") != f"제{article_no}조":
                 continue
 
+            # 항 처리
             if clause_no:
                 clauses = article.get("Paragraph")
                 if not clauses:
@@ -83,6 +84,7 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                     clauses = [clauses]
                 for clause in clauses:
                     if clause.get("ParagraphNum") == clause_no:
+                        # 호 처리
                         if subclause_no:
                             subclauses = clause.get("SubParagraph")
                             if not subclauses:
@@ -96,6 +98,7 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                         return clause.get("ParagraphContent", "내용 없음")
                 return "요청한 항을 찾을 수 없습니다."
 
+            # 항 없음 = 조문 전체 반환
             return article.get("ArticleContent", "내용 없음")
 
         return "요청한 조문을 찾을 수 없습니다."
