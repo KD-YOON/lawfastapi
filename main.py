@@ -9,7 +9,7 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="학교폭력예방법 등 실시간 API 또는 fallback JSON을 통한 조문 조회 서비스",
-    version="1.3.0"
+    version="1.3.1"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
@@ -71,7 +71,7 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
         print(f"[Fallback Error] {e}")
         return None
 
-# ✅ 개선된 get_law_id
+# ✅ 개선된 get_law_id with 비교 대상 출력
 def get_law_id(law_name):
     normalized = normalize_law_name(law_name)
     try:
@@ -99,6 +99,7 @@ def get_law_id(law_name):
                 continue
 
             for field in ["법령명한글", "법령약칭명", "법령명"]:
+                print(f"🔍 비교 대상: {field} → {law.get(field)}")
                 if normalize_law_name(law.get(field, "")) == normalized:
                     print(f"✅ 법령명 일치: {law.get(field)} → ID: {law.get('법령ID')}")
                     return law.get("법령ID")
@@ -109,7 +110,7 @@ def get_law_id(law_name):
         print("[lawId 자동 판별 오류]", e)
         return None
 
-# ✅ 시행예정 조문 대응 포함
+# ✅ 시행 예정 조문 대응
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
