@@ -5,12 +5,12 @@ from typing import Optional
 from urllib.parse import quote
 import requests
 import xmltodict
-import json
+import os
 
 app = FastAPI(
     title="School LawBot API",
     description="법령정보 DRF API 기반 조문, 항, 호 조회 서비스",
-    version="3.3.1"
+    version="3.3.2"
 )
 
 app.add_middleware(
@@ -21,7 +21,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OC_KEY = "dyun204"
+OC_KEY = os.getenv("OC_KEY")  # ✅ Render에 설정된 환경변수 이름과 일치
+
 DEBUG_MODE = True
 
 KNOWN_LAWS = {
@@ -38,13 +39,12 @@ def normalize_law_name(law_name):
 def get_law_id(law_name):
     normalized = normalize_law_name(law_name)
     try:
-        params = {
+        res = requests.get("https://www.law.go.kr/DRF/lawSearch.do", params={
             "OC": OC_KEY,
             "target": "law",
             "type": "XML",
             "query": law_name
-        }
-        res = requests.get("https://www.law.go.kr/DRF/lawSearch.do", params=params)
+        })
         res.raise_for_status()
         data = xmltodict.parse(res.text)
         laws = data.get("LawSearch", {}).get("laws", {}).get("law") or data.get("LawSearch", {}).get("law")
@@ -112,22 +112,18 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None)
 ):
     try:
-        if DEBUG_MODE:
-            print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
+        print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
         law_name = resolve_full_law_name(law_name)
         law_id = get_law_id(law_name)
         if not law_id:
             return JSONResponse(content={"error": "법령 ID 조회 실패"}, status_code=404)
 
-        res = requests.get(
-            "https://www.law.go.kr/DRF/lawService.do",
-            params={
-                "OC": OC_KEY,
-                "target": "law",
-                "type": "XML",
-                "ID": law_id
-            }
-        )
+        res = requests.get("https://www.law.go.kr/DRF/lawService.do", params={
+            "OC": OC_KEY,
+            "target": "law",
+            "type": "XML",
+            "ID": law_id
+        })
         res.raise_for_status()
 
         내용 = extract_article(res.text, article_no, clause_no, subclause_no)
