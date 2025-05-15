@@ -8,8 +8,8 @@ import json
 
 app = FastAPI(
     title="School LawBot API",
-    description="정확한 단일 조문 API 기반 법령 조회 서비스",
-    version="3.0.1"
+    description="법령정보 API를 활용한 조문 조회 서비스",
+    version="3.1.0"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
@@ -51,8 +51,6 @@ def get_law_id(law_name):
             if law.get("현행연혁코드") != "현행":
                 continue
             for field in ["법령명한글", "법령약칭명", "법령명"]:
-                if DEBUG_MODE:
-                    print(f"🔍 비교 대상: {field} → {law.get(field)}")
                 if normalize_law_name(law.get(field, "")) == normalized:
                     if DEBUG_MODE:
                         print(f"✅ 법령명 일치: {law.get(field)} → ID: {law.get('법령ID')}")
@@ -60,16 +58,28 @@ def get_law_id(law_name):
         return None
     except Exception as e:
         if DEBUG_MODE:
-            print("[lawId 자동 판별 오류]", e)
+            print("[lawId 오류]", e)
         return None
 
-def extract_single_article(xml_text):
+def extract_article(xml_text, article_no: str):
     try:
         data = xmltodict.parse(xml_text)
-        if "조문" in data:
-            조문 = data["조문"]
-            return 조문.get("조문내용", "내용 없음")
-        return "내용 없음"
+        if "Law" not in data:
+            return "법령 구조 오류 또는 미지원 형식"
+
+        law = data["Law"]
+        articles = law.get("article")
+
+        if isinstance(articles, dict):
+            articles = [articles]
+
+        target_title = f"제{article_no}조"
+
+        for article in articles:
+            if article.get("ArticleTitle", "").strip() == target_title:
+                return article.get("ArticleContent", "내용 없음")
+
+        return "요청한 조문을 찾을 수 없습니다."
     except Exception as e:
         if DEBUG_MODE:
             print(f"[Parsing Error] {e}")
@@ -86,31 +96,29 @@ def get_law_clause(
 
         law_name = resolve_full_law_name(law_name)
         law_id = get_law_id(law_name)
-
         if not law_id:
-            raise ValueError("법령 ID 조회 실패")
+            raise ValueError("법령 ID를 찾을 수 없습니다.")
 
-        # ✅ 정확한 단일 조문용 API로 수정 완료
-        detail_url = "https://www.law.go.kr/DRF/lawDownload.do"
-        params = {
-            "OC": OC_KEY,
-            "ID": law_id,
-            "type": "XML",
-            "article": article_no
-        }
-
-        res = requests.get(detail_url, params=params)
+        res = requests.get(
+            "https://www.law.go.kr/DRF/lawService.do",
+            params={
+                "OC": OC_KEY,
+                "target": "law",
+                "type": "XML",
+                "ID": law_id
+            }
+        )
         res.raise_for_status()
 
         if DEBUG_MODE:
-            print("[lawDownload 응답 일부]:")
+            print("[lawService 응답 일부]:")
             print(res.text[:1000])
 
-        내용 = extract_single_article(res.text)
+        내용 = extract_article(res.text, article_no)
 
         return JSONResponse(content={
             "source": "api",
-            "출처": "lawDownload.do",
+            "출처": "lawService.do",
             "법령명": law_name,
             "조문": f"제{article_no}조",
             "내용": 내용,
@@ -119,7 +127,7 @@ def get_law_clause(
 
     except Exception as e:
         if DEBUG_MODE:
-            print(f"🚨 예외 발생: {e}")
+            print(f"🚨 예외: {e}")
         return JSONResponse(content={
             "error": "API 호출 실패",
             "law_name": law_name,
