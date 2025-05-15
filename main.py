@@ -9,7 +9,7 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="학교폭력예방법 등 실시간 API 또는 fallback JSON을 통한 조문 조회 서비스",
-    version="1.1.3"
+    version="1.2.0"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
@@ -106,6 +106,12 @@ def get_law_id(law_name):
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
+
+        # ✅ 시행일자 안내만 온 경우
+        if "조문시행일자조회결과" in data:
+            시행일 = data["조문시행일자조회결과"].get("조문시행일자", "시행 예정일 정보 없음")
+            return f"이 조문은 아직 시행되지 않았습니다. 시행일자: {시행일}"
+
         if "LawService" in data or "Law" not in data:
             raise ValueError("법령 없음 또는 구조 이상")
 
@@ -164,12 +170,8 @@ def get_law_clause(
         }
         res = requests.get(detail_url, params=params)
 
-        # ✅ 응답 상태 로그 추가
         print("[lawService 응답 status_code]", res.status_code)
-
         res.raise_for_status()
-
-        # ✅ 응답 본문 디버깅 로그 추가
         print("[lawService 응답 구조 디버깅]", res.text[:500])
 
         내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
