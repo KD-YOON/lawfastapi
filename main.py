@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="3.6.2"
+    version="3.6.3"
 )
 
 app.add_middleware(
@@ -28,24 +28,19 @@ KNOWN_LAWS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률"
 }
 
-
 @app.get("/")
 def root():
     return {"message": "School LawBot API is running."}
-
 
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
 
-
 def resolve_full_law_name(law_name: str) -> str:
     return KNOWN_LAWS.get(law_name.strip(), law_name)
 
-
 def normalize_law_name(name: str) -> str:
     return name.replace(" ", "").strip()
-
 
 def get_law_id(law_name: str) -> Optional[str]:
     normalized = normalize_law_name(law_name)
@@ -87,7 +82,6 @@ def get_law_id(law_name: str) -> Optional[str]:
             print("[lawId 오류]", e)
         return None
 
-
 def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
@@ -101,11 +95,11 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                 continue
 
             clauses = article.get("Paragraph")
-          if not clauses:
-    return article.get("ArticleContent", "내용 없음")
+            if not clauses:
+                return article.get("ArticleContent", "내용 없음")
 
-if isinstance(clauses, dict):
-    clauses = [clauses]
+            if isinstance(clauses, dict):
+                clauses = [clauses]
 
             for clause in clauses:
                 if clause_no is None or clause.get("ParagraphNum") == clause_no:
@@ -113,22 +107,19 @@ if isinstance(clauses, dict):
                     if subclause_no:
                         if not subclauses:
                             return "요청한 호가 존재하지 않습니다."
-                        if isinstance(subclausees, dict):
-                            subclausees = [subclausees]
-                        for sub in subclausees:
+                        if isinstance(subclauses, dict):
+                            subclauses = [subclauses]
+                        for sub in subclauses:
                             if sub.get("SubParagraphNum") == subclause_no:
                                 return sub.get("SubParagraphContent", "내용 없음")
                         return "요청한 호를 찾을 수 없습니다."
                     return clause.get("ParagraphContent", "내용 없음")
-
             return "요청한 항을 찾을 수 없습니다."
-
         return "요청한 조문을 찾을 수 없습니다."
     except Exception as e:
         if DEBUG_MODE:
             print("[Parsing Error]", e)
         return "조문 정보가 존재하지 않습니다."
-
 
 @app.get("/law", summary="법령 조문 조회")
 def get_law_clause(
