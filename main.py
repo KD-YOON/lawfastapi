@@ -131,7 +131,6 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
                                 return sub.get("SubParagraphContent", "내용 없음")
                     return clause.get("ParagraphContent", "내용 없음")
 
-            # 항이 없거나 파싱 실패 시 ArticleContent fallback
             if "ArticleContent" in article:
                 return article.get("ArticleContent", "내용 없음")
 
@@ -156,16 +155,18 @@ def get_law_clause(
         if not law_id:
             raise ValueError("lawId 조회 실패")
 
-        # ✅ 핵심 수정: 반드시 ID= 로 전달
         detail_url = "https://www.law.go.kr/DRF/lawService.do"
         params = {
             "OC": OC_KEY,
             "target": "law",
             "type": "XML",
-            "ID": law_id  # 핵심 수정 포인트!
+            "ID": law_id
         }
         res = requests.get(detail_url, params=params)
         res.raise_for_status()
+
+        # ✅ 디버깅 로그 추가
+        print("[lawService 응답 구조 디버깅]", res.text[:500])
 
         내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
         print(f"✅ 최종 내용: {내용[:80]}...")
