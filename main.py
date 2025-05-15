@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="4.0.0"
+    version="4.1.0"
 )
 
 app.add_middleware(
@@ -87,7 +87,6 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
         return None
 
 def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
-    # 아라비아 숫자 <-> 한글/로마 숫자 자동 매핑(①→1, ②→2 등)
     circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
     try:
         data = xmltodict.parse(xml_text)
@@ -112,10 +111,9 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                 if isinstance(clauses, dict):
                     clauses = [clauses]
                 for clause in clauses:
-                    # 항번호는 '①', '②' ...일 수 있으니 변환
+                    # 항번호 매칭 (①→1, ②→2)
                     clause_num = clause.get("항번호")
                     clause_num_arabic = circled_nums.get(clause_num, clause_num)
-                    # 아라비아 숫자, 원문 그대로 모두 지원
                     if (clause_num_arabic == str(clause_no)) or (clause_num == str(clause_no)):
                         # (2-1) 호 없는 항은 항내용 반환
                         if not subclause_no:
