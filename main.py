@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="3.6.4"
+    version="3.6.5"
 )
 
 app.add_middleware(
@@ -45,16 +45,21 @@ def normalize_law_name(name: str) -> str:
 def get_law_id(law_name: str) -> Optional[str]:
     normalized = normalize_law_name(law_name)
     try:
+        print(f"▶ 사용 중인 OC_KEY: {OC_KEY}")
         res = requests.get("https://www.law.go.kr/DRF/lawSearch.do", params={
             "OC": OC_KEY,
             "target": "law",
             "type": "XML",
-            "query": law_name
+            "query": law_name,
+            "pIndex": 1,
+            "pSize": 10
         })
         res.raise_for_status()
         data = xmltodict.parse(res.text)
+        if DEBUG_MODE:
+            print(f"⛳ 응답 키 목록: {list(data.keys())}")
 
-        law_root = data.get("LawSearch", {})
+        law_root = data.get("LawSearch") or data.get("lawSearch") or {}
         laws = law_root.get("laws", {}).get("law") or law_root.get("law")
 
         if not laws:
@@ -94,17 +99,13 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
             if article.get("ArticleTitle") != f"제{article_no}조":
                 continue
 
-            clauses = article.get("Paragraph")
-            if not clauses:
-                return article.get("ArticleContent", "내용 없음")
-
+            clauses = article.get("Paragraph") or []
             if isinstance(clauses, dict):
                 clauses = [clauses]
 
             for clause in clauses:
                 if clause_no is None or clause.get("ParagraphNum") == clause_no:
                     subclauses = clause.get("SubParagraph")
-
                     if subclause_no:
                         if not subclauses:
                             return "요청한 호가 존재하지 않습니다."
@@ -150,7 +151,9 @@ def get_law_clause(
             "OC": OC_KEY,
             "target": "law",
             "type": "XML",
-            "ID": law_id
+            "ID": law_id,
+            "pIndex": 1,
+            "pSize": 1000
         })
         res.raise_for_status()
 
