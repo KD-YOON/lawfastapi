@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="3.8.0"
+    version="3.9.0"
 )
 
 app.add_middleware(
@@ -33,6 +33,10 @@ def root():
 
 @app.get("/healthz")
 def health_check():
+    return {"status": "ok"}
+
+@app.get("/ping")
+def ping():
     return {"status": "ok"}
 
 def resolve_full_law_name(law_name: str) -> str:
@@ -85,7 +89,6 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
 def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
-
         # 1. article(영문) 또는 조문(한글) 자동 대응
         articles = (
             data.get("Law", {}).get("article")
@@ -111,7 +114,7 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
             if not content:
                 return "내용 없음"
             # 4. 항/호 필요 시 기존 로직 추가 (일단 본문만 반환)
-            # ※ 항/호 구조가 필요한 법령 구조 발견 시, 여기서 추가 분기하면 됨
+            # 항/호 구조 필요한 법령의 경우 실제 XML 구조 보고 아래 분기 추가
             return content
         return "요청한 조문을 찾을 수 없습니다."
     except Exception as e:
