@@ -30,11 +30,14 @@ KNOWN_LAWS = {
     "개인정보보호법": "개인정보 보호법"
 }
 
+
 def resolve_full_law_name(law_name):
     return KNOWN_LAWS.get(law_name.strip(), law_name)
 
+
 def normalize_law_name(law_name):
     return law_name.replace(" ", "").strip()
+
 
 def get_law_id(law_name):
     normalized = normalize_law_name(law_name)
@@ -63,6 +66,7 @@ def get_law_id(law_name):
             print("[lawId 오류]", e)
         return None
 
+
 def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
@@ -77,9 +81,8 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
 
             clauses = article.get("Paragraph")
 
-            # ✅ 항이 없을 경우 fallback으로 조문 전체 반환
             if not clauses:
-                return article.get("ArticleContent", "내용 없음")
+                return article.get("ArticleContent", "해당 조문에 항 정보가 없습니다.")
 
             if isinstance(clauses, dict):
                 clauses = [clauses]
@@ -103,14 +106,15 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     except Exception as e:
         if DEBUG_MODE:
             print("[Parsing Error]", e)
-        return "내용 없음"
+        return "내용을 불러오는 중 오류가 발생했습니다."
 
-@app.get("/law", summary="법령 조문 조회")
+
+@app.get("/law", summary="법령 조문 조회", description="법령명, 조문 번호, 항, 호를 기준으로 국가법령정보센터에서 실시간으로 법령 내용을 조회합니다.")
 def get_law_clause(
-    law_name: str = Query(..., example="학교폭력예방법"),
-    article_no: str = Query(..., example="16"),
-    clause_no: Optional[str] = Query(None),
-    subclause_no: Optional[str] = Query(None)
+    law_name: str = Query(..., example="학교폭력예방법", description="법령명 또는 약칭명"),
+    article_no: str = Query(..., example="16", description="조회할 조문 번호"),
+    clause_no: Optional[str] = Query(None, example="1", description="조회할 항 번호"),
+    subclause_no: Optional[str] = Query(None, example="2", description="조회할 호 번호")
 ):
     try:
         print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
