@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="3.7.1"
+    version="3.8.0"
 )
 
 app.add_middleware(
@@ -85,45 +85,34 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
 def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
         data = xmltodict.parse(xml_text)
-        law = data.get("Law", {})
-        articles = law.get("article")
+
+        # 1. article(영문) 또는 조문(한글) 자동 대응
+        articles = (
+            data.get("Law", {}).get("article")
+            or data.get("Law", {}).get("조문")
+            or data.get("조문")
+        )
         if not articles:
             return "조문 정보가 존재하지 않습니다."
         if isinstance(articles, dict):
             articles = [articles]
         for article in articles:
-            if article.get("ArticleTitle") != f"제{article_no}조":
+            # 2. 조문번호/ArticleTitle 자동 대응
+            art_num = article.get("ArticleTitle") or article.get("조문번호")
+            if art_num != f"제{article_no}조":
                 continue
-            # Paragraph(항)이 없으면 본문만 반환
-            clauses = article.get("Paragraph")
-            if not clauses:
-                return (
-                    article.get("ArticleContent")
-                    or article.get("ArticleBody")
-                    or article.get("ArticleText")
-                    or "내용 없음"
-                )
-            # 반복문 전 항상 list 보장
-            if isinstance(clauses, dict):
-                clauses = [clauses]
-            if not isinstance(clauses, list):
-                clauses = []
-            for clause in clauses:
-                if clause_no is None or clause.get("ParagraphNum") == clause_no:
-                    subclauses = clause.get("SubParagraph")
-                    if subclause_no:
-                        if not subclauses:
-                            return "요청한 호가 존재하지 않습니다."
-                        if isinstance(subclauses, dict):
-                            subclauses = [subclauses]
-                        if not isinstance(subclauses, list):
-                            subclauses = []
-                        for sub in subclauses:
-                            if sub.get("SubParagraphNum") == subclause_no:
-                                return sub.get("SubParagraphContent", "내용 없음")
-                        return "요청한 호를 찾을 수 없습니다."
-                    return clause.get("ParagraphContent", "내용 없음")
-            return "요청한 항을 찾을 수 없습니다."
+            # 3. 본문 키 자동 대응(조문내용, ArticleContent 등)
+            content = (
+                article.get("ArticleContent")
+                or article.get("ArticleBody")
+                or article.get("조문내용")
+                or article.get("ArticleText")
+            )
+            if not content:
+                return "내용 없음"
+            # 4. 항/호 필요 시 기존 로직 추가 (일단 본문만 반환)
+            # ※ 항/호 구조가 필요한 법령 구조 발견 시, 여기서 추가 분기하면 됨
+            return content
         return "요청한 조문을 찾을 수 없습니다."
     except Exception as e:
         if DEBUG_MODE:
