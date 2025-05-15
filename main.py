@@ -8,8 +8,8 @@ import json
 
 app = FastAPI(
     title="School LawBot API",
-    description="단일 조문 API 기반 정확한 법령 조문 조회 서비스",
-    version="3.0.0"
+    description="정확한 단일 조문 API 기반 법령 조회 서비스",
+    version="3.0.1"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
@@ -90,7 +90,8 @@ def get_law_clause(
         if not law_id:
             raise ValueError("법령 ID 조회 실패")
 
-        detail_url = "https://www.law.go.kr/DRF/lawXmlDownload.do"
+        # ✅ 정확한 단일 조문용 API로 수정 완료
+        detail_url = "https://www.law.go.kr/DRF/lawDownload.do"
         params = {
             "OC": OC_KEY,
             "ID": law_id,
@@ -102,14 +103,14 @@ def get_law_clause(
         res.raise_for_status()
 
         if DEBUG_MODE:
-            print("[lawXmlDownload 응답 일부]:")
+            print("[lawDownload 응답 일부]:")
             print(res.text[:1000])
 
         내용 = extract_single_article(res.text)
 
         return JSONResponse(content={
             "source": "api",
-            "출처": "lawXmlDownload.do",
+            "출처": "lawDownload.do",
             "법령명": law_name,
             "조문": f"제{article_no}조",
             "내용": 내용,
