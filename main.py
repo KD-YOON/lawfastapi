@@ -9,11 +9,13 @@ import json
 app = FastAPI(
     title="School LawBot API",
     description="학교폭력예방법 등 실시간 API 또는 fallback JSON을 통한 조문 조회 서비스",
-    version="1.5.0"
+    version="2.0.0"
 )
 
 FALLBACK_FILE = "학교폭력예방 및 대책에 관한 법률.json"
 OC_KEY = "dyun204"
+
+DEBUG_MODE = True  # 로그 출력 여부 설정
 
 KNOWN_LAWS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
@@ -68,7 +70,8 @@ def load_fallback(law_name, article_no, clause_no=None, subclause_no=None):
             "법령링크": f"https://www.law.go.kr/법령/{quote(law_name, safe='')}/{article_key}"
         })
     except Exception as e:
-        print(f"[Fallback Error] {e}")
+        if DEBUG_MODE:
+            print(f"[Fallback Error] {e}")
         return None
 
 def get_law_id(law_name):
@@ -95,37 +98,44 @@ def get_law_id(law_name):
             if law.get("현행연혁코드") != "현행":
                 continue
             for field in ["법령명한글", "법령약칭명", "법령명"]:
-                print(f"🔍 비교 대상: {field} → {law.get(field)}")
+                if DEBUG_MODE:
+                    print(f"🔍 비교 대상: {field} → {law.get(field)}")
                 if normalize_law_name(law.get(field, "")) == normalized:
-                    print(f"✅ 법령명 일치: {law.get(field)} → ID: {law.get('법령ID')}")
+                    if DEBUG_MODE:
+                        print(f"✅ 법령명 일치: {law.get(field)} → ID: {law.get('법령ID')}")
                     return law.get("법령ID")
-        print("❌ 일치하는 법령명 없음")
+        if DEBUG_MODE:
+            print("❌ 일치하는 법령명 없음")
         return None
     except Exception as e:
-        print("[lawId 자동 판별 오류]", e)
+        if DEBUG_MODE:
+            print("[lawId 자동 판별 오류]", e)
         return None
 
-# ✅ 단일 조문 구조 및 시행 예정 필터링 반영
 def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_no=None):
     try:
-        print("📦 lawService 응답 원문 일부 ↓↓↓")
-        print(xml_text[:1000])
+        if DEBUG_MODE:
+            print("📦 lawService 응답 원문 일부 ↓↓↓")
+            print(xml_text[:1000])
 
         data = xmltodict.parse(xml_text)
 
-        # ✅ 단일 조문 구조 처리
+        # ✅ 단일 조문 CDATA 구조 대응
+        if "조문내용" in data:
+            내용 = data["조문내용"]
+            if isinstance(내용, dict):
+                return 내용.get("#text", "내용 없음")
+            return 내용
+
+        # ✅ 단일 조문 구조 대응
         if "조문" in data and isinstance(data["조문"], dict):
             조문 = data["조문"]
-            조문내용 = 조문.get("조문내용", "내용 없음")
-            print(f"📘 단일 조문 형식 감지됨 → 반환: {조문내용[:50]}...")
-            return 조문내용
+            return 조문.get("조문내용", "내용 없음")
 
         # ✅ 시행 예정 조문 구조 감지
         if "조문시행일자조회결과" in data:
             시행일 = data["조문시행일자조회결과"].get("조문시행일자", "시행 예정일 정보 없음")
-            안내문 = f"[현행법 아님] 이 조문은 아직 시행되지 않았습니다. 시행일자: {시행일}"
-            print(f"🕓 시행예정 조문 → 거부: {안내문}")
-            return 안내문
+            return f"[현행법 아님] 이 조문은 아직 시행되지 않았습니다. 시행일자: {시행일}"
 
         if "LawService" in data or "Law" not in data:
             raise ValueError("법령 없음 또는 구조 이상")
@@ -157,7 +167,8 @@ def extract_clause_from_law_xml(xml_text, article_no, clause_no=None, subclause_
 
         return "내용 없음"
     except Exception as e:
-        print(f"[Parsing Error] {e}")
+        if DEBUG_MODE:
+            print(f"[Parsing Error] {e}")
         return "내용 없음"
 
 @app.get("/law", summary="법령 조문 조회")
@@ -168,10 +179,14 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None, example="2")
 ):
     try:
-        print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
+        if DEBUG_MODE:
+            print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
+
         law_name = resolve_full_law_name(law_name)
         law_id = get_law_id(law_name)
-        print(f"🔍 law_id 결과: {law_id}")
+
+        if DEBUG_MODE:
+            print(f"🔍 law_id 결과: {law_id}")
 
         if not law_id:
             raise ValueError("lawId 조회 실패")
@@ -185,12 +200,13 @@ def get_law_clause(
         }
         res = requests.get(detail_url, params=params)
 
-        print("[lawService 응답 status_code]", res.status_code)
-        res.raise_for_status()
-        print("[lawService 응답 구조 디버깅]", res.text[:500])
+        if DEBUG_MODE:
+            print("[lawService 응답 status_code]", res.status_code)
+            print("[lawService 응답 구조 디버깅]", res.text[:500])
 
         내용 = extract_clause_from_law_xml(res.text, article_no, clause_no, subclause_no)
-        print(f"✅ 최종 내용: {내용[:80]}...")
+        if DEBUG_MODE:
+            print(f"✅ 최종 내용: {내용[:80]}...")
 
         return JSONResponse(content={
             "source": "api",
@@ -204,7 +220,8 @@ def get_law_clause(
         })
 
     except Exception as e:
-        print(f"🚨 API 예외: {e}")
+        if DEBUG_MODE:
+            print(f"🚨 API 예외: {e}")
         fallback = load_fallback(law_name, article_no, clause_no, subclause_no)
         return fallback or JSONResponse(content={
             "error": "API 호출 실패 및 fallback 없음",
