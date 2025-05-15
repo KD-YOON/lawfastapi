@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="3.9.0"
+    version="4.0.0"
 )
 
 app.add_middleware(
@@ -87,12 +87,12 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
         return None
 
 def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
+    # 아라비아 숫자 <-> 한글/로마 숫자 자동 매핑(①→1, ②→2 등)
+    circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
     try:
         data = xmltodict.parse(xml_text)
-        # 1. article(영문) 또는 조문(한글) 자동 대응
         articles = (
-            data.get("Law", {}).get("article")
-            or data.get("Law", {}).get("조문")
+            data.get("Law", {}).get("조문")
             or data.get("조문")
         )
         if not articles:
@@ -100,22 +100,38 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
         if isinstance(articles, dict):
             articles = [articles]
         for article in articles:
-            # 2. 조문번호/ArticleTitle 자동 대응
-            art_num = article.get("ArticleTitle") or article.get("조문번호")
-            if art_num != f"제{article_no}조":
-                continue
-            # 3. 본문 키 자동 대응(조문내용, ArticleContent 등)
-            content = (
-                article.get("ArticleContent")
-                or article.get("ArticleBody")
-                or article.get("조문내용")
-                or article.get("ArticleText")
-            )
-            if not content:
-                return "내용 없음"
-            # 4. 항/호 필요 시 기존 로직 추가 (일단 본문만 반환)
-            # 항/호 구조 필요한 법령의 경우 실제 XML 구조 보고 아래 분기 추가
-            return content
+            art_num = article.get("조문번호")
+            if art_num and art_num.startswith(f"제{article_no}조"):
+                # (1) 항/호 없이 조문 본문만
+                if not clause_no:
+                    return article.get("조문내용") or "내용 없음"
+                # (2) 항 있는 경우
+                clauses = article.get("항")
+                if not clauses:
+                    return "요청한 항을 찾을 수 없습니다."
+                if isinstance(clauses, dict):
+                    clauses = [clauses]
+                for clause in clauses:
+                    # 항번호는 '①', '②' ...일 수 있으니 변환
+                    clause_num = clause.get("항번호")
+                    clause_num_arabic = circled_nums.get(clause_num, clause_num)
+                    # 아라비아 숫자, 원문 그대로 모두 지원
+                    if (clause_num_arabic == str(clause_no)) or (clause_num == str(clause_no)):
+                        # (2-1) 호 없는 항은 항내용 반환
+                        if not subclause_no:
+                            return clause.get("항내용") or "내용 없음"
+                        # (2-2) 호 있는 경우
+                        subclauses = clause.get("호")
+                        if not subclauses:
+                            return "요청한 호를 찾을 수 없습니다."
+                        if isinstance(subclauses, dict):
+                            subclauses = [subclauses]
+                        for sub in subclauses:
+                            sub_num = sub.get("호번호")
+                            if sub_num == str(subclause_no):
+                                return sub.get("호내용") or "내용 없음"
+                        return "요청한 호를 찾을 수 없습니다."
+                return "요청한 항을 찾을 수 없습니다."
         return "요청한 조문을 찾을 수 없습니다."
     except Exception as e:
         if DEBUG_MODE:
