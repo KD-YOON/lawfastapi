@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="3.5.0"
+    version="3.6.0"
 )
 
 app.add_middleware(
@@ -21,17 +21,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OC_KEY = os.getenv("OC_KEY")  # 환경 변수
+OC_KEY = os.getenv("OC_KEY")
 DEBUG_MODE = True
 
 KNOWN_LAWS = {
-    "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
-    "개인정보보호법": "개인정보 보호법"
+    "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률"
 }
+
 
 @app.get("/")
 def root():
     return {"message": "LawBot API is running"}
+
 
 @app.get("/healthz")
 def health_check():
@@ -106,14 +107,23 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                 if clause_no is None or clause.get("ParagraphNum") == clause_no:
                     subclauses = clause.get("SubParagraph")
 
+                    if DEBUG_MODE:
+                        print("🟡 SubParagraph 구조:", subclauses)
+
                     if subclause_no:
                         if not subclauses:
                             return "요청한 호가 존재하지 않습니다."
                         if isinstance(subclauses, dict):
                             subclauses = [subclauses]
+
                         for sub in subclauses:
-                            if sub.get("SubParagraphNum") == subclause_no:
-                                return sub.get("SubParagraphContent", "내용 없음")
+                            # 일반 구조
+                            num = sub.get("SubParagraphNum") or sub.get("@SubParagraphNum")
+                            content = sub.get("SubParagraphContent") or sub.get("#text")
+
+                            if num == subclause_no:
+                                return content or "내용 없음"
+
                         return "요청한 호를 찾을 수 없습니다."
 
                     return clause.get("ParagraphContent", "내용 없음")
@@ -130,10 +140,10 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
 
 @app.get("/law", summary="법령 조문 조회", description="법령명, 조문 번호, 항 번호, 호 번호를 기준으로 해당 법령 내용을 조회합니다.")
 def get_law_clause(
-    law_name: str = Query(..., example="학교폭력예방법", description="법령명 또는 약칭명"),
-    article_no: str = Query(..., example="16", description="조회할 조문 번호"),
-    clause_no: Optional[str] = Query(None, example="1", description="조회할 항 번호"),
-    subclause_no: Optional[str] = Query(None, example="2", description="조회할 호 번호")
+    law_name: str = Query(..., example="학교폭력예방법"),
+    article_no: str = Query(..., example="16"),
+    clause_no: Optional[str] = Query(None, example="1"),
+    subclause_no: Optional[str] = Query(None, example="2")
 ):
     try:
         print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
