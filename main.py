@@ -31,6 +31,11 @@ KNOWN_LAWS = {
 }
 
 
+@app.get("/healthz")
+def health_check():
+    return {"status": "ok"}
+
+
 def resolve_full_law_name(law_name):
     return KNOWN_LAWS.get(law_name.strip(), law_name)
 
