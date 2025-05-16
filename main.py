@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="4.4.0-lawmatch"
+    version="4.5.0-lawsearchfix"
 )
 
 app.add_middleware(
@@ -23,23 +23,24 @@ app.add_middleware(
 
 DEBUG_MODE = True
 
-# 반드시 약칭 → 정식명칭 매핑
 KNOWN_LAWS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
-    # 아래와 같이 필요한 만큼 추가!
-    "아동복지법": "아동복지법",
     "개인정보보호법": "개인정보 보호법",
+    # 필요에 따라 계속 추가
 }
 
 @app.get("/")
+@app.head("/")
 def root():
     return {"message": "School LawBot API is running."}
 
 @app.get("/healthz")
+@app.head("/healthz")
 def health_check():
     return {"status": "ok"}
 
 @app.get("/ping")
+@app.head("/ping")
 def ping():
     return {"status": "ok"}
 
@@ -78,11 +79,11 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
         print("[DEBUG] lawSearch URL:", res.url)
         res.raise_for_status()
         data = xmltodict.parse(res.text)
-        if DEBUG_MODE:
-            print(f"[DEBUG] lawSearch 응답 키 목록: {list(data.keys())}")
-            print("[DEBUG] lawSearch 응답 일부:", str(res.text)[:300])
-        law_root = data.get("Law") or data.get("법령") or {}
+        # 핵심: 반드시 LawSearch > laws > law 구조로 추출!
+        law_root = data.get("LawSearch") or data.get("lawSearch") or {}
+        print("[DEBUG] law_root keys:", law_root.keys())
         laws = law_root.get("laws", {}).get("law") or law_root.get("law")
+        print("[DEBUG] laws:", laws)
         if not laws:
             print("[DEBUG] ❌ law 리스트가 비어 있음")
             return None
@@ -120,7 +121,6 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
             art_num = article.get("조문번호")
             print(f"[DEBUG] 현재 art_num: {art_num} / 요청 article_no: {article_no}")
             if art_num == str(article_no):
-                # 항 파싱
                 clauses = article.get("항")
                 print("[DEBUG] clauses:", clauses)
                 if not clause_no:
@@ -134,7 +134,6 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                     clause_num_arabic = circled_nums.get(clause_num, clause_num)
                     print(f"[DEBUG] 현재 clause_num: {clause_num}({clause_num_arabic}) / 요청 clause_no: {clause_no}")
                     if clause_num_arabic == str(clause_no) or clause_num == str(clause_no):
-                        # 호 파싱
                         if not subclause_no:
                             return clause.get("항내용", "내용 없음")
                         subclauses = clause.get("호")
