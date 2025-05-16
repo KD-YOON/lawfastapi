@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
-    version="4.3.0-hangul"
+    version="4.4.0-lawmatch"
 )
 
 app.add_middleware(
@@ -23,8 +23,12 @@ app.add_middleware(
 
 DEBUG_MODE = True
 
+# 반드시 약칭 → 정식명칭 매핑
 KNOWN_LAWS = {
-    "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률"
+    "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
+    # 아래와 같이 필요한 만큼 추가!
+    "아동복지법": "아동복지법",
+    "개인정보보호법": "개인정보 보호법",
 }
 
 @app.get("/")
@@ -47,7 +51,14 @@ def privacy_policy():
     }
 
 def resolve_full_law_name(law_name: str) -> str:
-    return KNOWN_LAWS.get(law_name.strip(), law_name)
+    """
+    약칭, 띄어쓰기, 오타 등 다양한 입력을 KNOWN_LAWS 딕셔너리 기반 정식명칭으로 변환
+    """
+    name = law_name.replace(" ", "").strip()
+    for k, v in KNOWN_LAWS.items():
+        if name == k.replace(" ", ""):
+            return v
+    return law_name  # 못 찾으면 원본 반환
 
 def normalize_law_name(name: str) -> str:
     return name.replace(" ", "").strip()
@@ -155,6 +166,7 @@ def get_law_clause(
     try:
         print(f"📥 요청: {law_name} 제{article_no}조 {clause_no or ''}항 {subclause_no or ''}호")
         law_name_full = resolve_full_law_name(law_name)
+        print(f"[DEBUG] 정식 법령명 변환: {law_name} → {law_name_full}")
         law_id = get_law_id(law_name_full, api_key)
         print(f"[DEBUG] ➡ law_id: {law_id}")
         if not law_id:
