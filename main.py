@@ -6,11 +6,15 @@ from urllib.parse import quote
 import requests
 import xmltodict
 import datetime
+import os  # 환경변수 사용
+
+# 환경변수에서 OC_KEY(국가법령정보센터 OpenAPI 키) 읽기
+API_KEY = os.environ.get("OC_KEY", "default_key")  # Render 대시보드에 등록된 키와 맞출 것
 
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 요청 로그 기록",
-    version="5.0.0-final"
+    version="5.0.0-final-env"
 )
 
 app.add_middleware(
@@ -27,7 +31,6 @@ KNOWN_LAWS = {
     # 추가 약칭은 여기!
 }
 
-# 최근 50건 로그 저장 (운영시 파일/DB로 대체 가능)
 recent_logs = []
 
 @app.get("/")
@@ -134,9 +137,10 @@ def get_law_clause(
     article_no: str = Query(..., example="16"),
     clause_no: Optional[str] = Query(None),
     subclause_no: Optional[str] = Query(None),
-    api_key: str = Query(..., description="GPTs에서 전달되는 API 키"),
+    # api_key: str = Query(None),   # 더 이상 외부에서 안 받음(선택적, 유지해도 override)
     request: Request = None
 ):
+    api_key = API_KEY  # 환경변수 값 강제 적용
     log_entry = {
         "timestamp": datetime.datetime.now().isoformat(),
         "client_ip": request.client.host if request else "unknown",
@@ -144,6 +148,7 @@ def get_law_clause(
         "article_no": article_no,
         "clause_no": clause_no,
         "subclause_no": subclause_no,
+        "api_key": api_key  # 로그에도 기록
     }
     try:
         law_name_full = resolve_full_law_name(law_name)
