@@ -8,13 +8,12 @@ import xmltodict
 import datetime
 import os
 
-# 환경변수에서 OC_KEY(국가법령정보센터 OpenAPI 키) 읽기
-API_KEY = os.environ.get("OC_KEY", "default_key")  # Render 대시보드에 등록된 키와 맞출 것
+API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 요청 로그 기록",
-    version="5.1.0-clause-link"
+    version="5.2.0-markdown"
 )
 
 app.add_middleware(
@@ -29,32 +28,9 @@ KNOWN_LAWS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
     "학교폭력예방법 시행령": "학교폭력예방 및 대책에 관한 법률 시행령",
     "개인정보보호법": "개인정보 보호법",
-    # 추가 약칭은 여기!
 }
 
 recent_logs = []
-
-@app.get("/")
-@app.head("/")
-def root():
-    return {"message": "School LawBot API is running."}
-
-@app.get("/healthz")
-@app.head("/healthz")
-def health_check():
-    return {"status": "ok"}
-
-@app.get("/ping")
-@app.head("/ping")
-def ping():
-    return {"status": "ok"}
-
-@app.get("/privacy-policy")
-def privacy_policy():
-    return {
-        "message": "본 서비스의 개인정보 처리방침은 다음 링크에서 확인할 수 있습니다.",
-        "url": "https://YOURDOMAIN.com/privacy-policy"
-    }
 
 def resolve_full_law_name(law_name: str) -> str:
     name = law_name.replace(" ", "").strip()
@@ -122,7 +98,7 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                         subclauses = clause.get("호", [])
                         if isinstance(subclauses, dict):
                             subclauses = [subclauses]
-                        for sub in subclause:
+                        for sub in subclauses:
                             sub_num = sub.get("호번호", "").replace(".", "")
                             if sub_num == str(subclause_no):
                                 return sub.get("호내용", "내용 없음")
@@ -132,22 +108,28 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     except Exception as e:
         return f"파싱 오류: {e}"
 
-# ★★★ 출처 링크 자동 생성 함수 (항, 호, 시행령 지원) ★★★
 def make_law_url(law_name_full, article_no=None, clause_no=None, subclause_no=None):
-    # 시행령 자동 처리
     law_name_url = law_name_full.replace(" ", "")
-    is_regulation = ("시행령" in law_name_url)
     url = f"https://www.law.go.kr/법령/{quote(law_name_url)}"
-    # 조문
     if article_no:
         url += f"/제{article_no}조"
-    # 항
     if clause_no:
         url += f"/제{clause_no}항"
-    # 호
     if subclause_no:
         url += f"/{subclause_no}호"
     return url
+
+def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, 법령링크):
+    return (
+        "| 항목 | 내용 |\n"
+        "|------|------|\n"
+        f"| 법령명 | {law_name} |\n"
+        f"| 조문 | {'제'+str(article_no)+'조' if article_no else ''} |\n"
+        f"| 항 | {str(clause_no)+'항' if clause_no else ''} |\n"
+        f"| 호 | {str(subclause_no)+'호' if subclause_no else ''} |\n"
+        f"| 내용 | {내용} |\n"
+        f"| 출처 | [국가법령정보센터 바로가기]({법령링크}) |\n"
+    )
 
 @app.get("/law", summary="법령 조문 조회")
 def get_law_clause(
@@ -157,7 +139,7 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None),
     request: Request = None
 ):
-    api_key = API_KEY  # 환경변수 값 강제 적용
+    api_key = API_KEY
     log_entry = {
         "timestamp": datetime.datetime.now().isoformat(),
         "client_ip": request.client.host if request else "unknown",
@@ -195,6 +177,7 @@ def get_law_clause(
             return JSONResponse(content={"error": "해당 법령은 조회할 수 없습니다."}, status_code=403)
         내용 = extract_article(res.text, article_no, clause_no, subclause_no)
         law_url = make_law_url(law_name_full, article_no, clause_no, subclause_no)
+        markdown = make_markdown_table(law_name_full, article_no, clause_no, subclause_no, 내용, law_url)
         result = {
             "source": "api",
             "출처": "lawService",
@@ -203,7 +186,8 @@ def get_law_clause(
             "항": f"{clause_no}항" if clause_no else "",
             "호": f"{subclause_no}호" if subclause_no else "",
             "내용": 내용,
-            "법령링크": law_url
+            "법령링크": law_url,
+            "markdown": markdown    # 🟢 마크다운 테이블 포함!
         }
         log_entry["status"] = "success"
         log_entry["result"] = result
