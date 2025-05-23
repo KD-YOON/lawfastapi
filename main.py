@@ -1,14 +1,15 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from urllib.parse import quote
 import requests
 import xmltodict
+import datetime
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스",
+    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 요청 로그 기록",
     version="5.0.0-final"
 )
 
@@ -25,6 +26,9 @@ KNOWN_LAWS = {
     "개인정보보호법": "개인정보 보호법",
     # 추가 약칭은 여기!
 }
+
+# 최근 50건 로그 저장 (운영시 파일/DB로 대체 가능)
+recent_logs = []
 
 @app.get("/")
 @app.head("/")
@@ -49,7 +53,6 @@ def privacy_policy():
     }
 
 def resolve_full_law_name(law_name: str) -> str:
-    # 약칭 입력시 정식 명칭으로 변환
     name = law_name.replace(" ", "").strip()
     for k, v in KNOWN_LAWS.items():
         if name == k.replace(" ", ""):
@@ -101,10 +104,8 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
             articles = [articles]
         for article in articles:
             if article.get("조문번호") == str(article_no):
-                # 항 미지정: 조문 전체
                 if not clause_no:
                     return article.get("조문내용", "내용 없음")
-                # 항 지정
                 clauses = article.get("항", [])
                 if isinstance(clauses, dict):
                     clauses = [clauses]
@@ -112,14 +113,12 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                     cnum = clause.get("항번호", "").strip()
                     cnum_arabic = circled_nums.get(cnum, cnum)
                     if cnum_arabic == str(clause_no) or cnum == str(clause_no):
-                        # 호 미지정: 항 본문
                         if not subclause_no:
                             return clause.get("항내용", "내용 없음")
                         subclauses = clause.get("호", [])
                         if isinstance(subclauses, dict):
                             subclauses = [subclauses]
                         for sub in subclauses:
-                            # "1.", "2." 등으로 오면 .제거해서 비교
                             sub_num = sub.get("호번호", "").replace(".", "")
                             if sub_num == str(subclause_no):
                                 return sub.get("호내용", "내용 없음")
@@ -135,12 +134,26 @@ def get_law_clause(
     article_no: str = Query(..., example="16"),
     clause_no: Optional[str] = Query(None),
     subclause_no: Optional[str] = Query(None),
-    api_key: str = Query(..., description="GPTs에서 전달되는 API 키")
+    api_key: str = Query(..., description="GPTs에서 전달되는 API 키"),
+    request: Request = None
 ):
+    log_entry = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "client_ip": request.client.host if request else "unknown",
+        "law_name": law_name,
+        "article_no": article_no,
+        "clause_no": clause_no,
+        "subclause_no": subclause_no,
+    }
     try:
         law_name_full = resolve_full_law_name(law_name)
         law_id = get_law_id(law_name_full, api_key)
         if not law_id:
+            log_entry["status"] = "error"
+            log_entry["error"] = "법령 ID 조회 실패"
+            recent_logs.append(log_entry)
+            if len(recent_logs) > 50:
+                recent_logs.pop(0)
             return JSONResponse(content={"error": "법령 ID 조회 실패"}, status_code=404)
         res = requests.get("https://www.law.go.kr/DRF/lawService.do", params={
             "OC": api_key,
@@ -152,9 +165,14 @@ def get_law_clause(
         })
         res.raise_for_status()
         if "법령이 없습니다" in res.text:
+            log_entry["status"] = "error"
+            log_entry["error"] = "해당 법령은 조회할 수 없습니다."
+            recent_logs.append(log_entry)
+            if len(recent_logs) > 50:
+                recent_logs.pop(0)
             return JSONResponse(content={"error": "해당 법령은 조회할 수 없습니다."}, status_code=403)
         내용 = extract_article(res.text, article_no, clause_no, subclause_no)
-        return JSONResponse(content={
+        result = {
             "source": "api",
             "출처": "lawService",
             "법령명": law_name_full,
@@ -163,7 +181,22 @@ def get_law_clause(
             "호": f"{subclause_no}호" if subclause_no else "",
             "내용": 내용,
             "법령링크": f"https://www.law.go.kr/법령/{quote(law_name_full, safe='')}/{article_no}조"
-        })
+        }
+        log_entry["status"] = "success"
+        log_entry["result"] = result
+        recent_logs.append(log_entry)
+        if len(recent_logs) > 50:
+            recent_logs.pop(0)
+        return JSONResponse(content=result)
     except Exception as e:
+        log_entry["status"] = "error"
+        log_entry["error"] = str(e)
+        recent_logs.append(log_entry)
+        if len(recent_logs) > 50:
+            recent_logs.pop(0)
         print("🚨 API 에러:", e)
         return JSONResponse(content={"error": "API 호출 실패"}, status_code=500)
+
+@app.get("/test-log", summary="최근 요청 로그 10건 조회")
+def test_log():
+    return {"recent_logs": recent_logs[-10:]}
