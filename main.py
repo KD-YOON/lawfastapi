@@ -12,8 +12,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 요청 로그 기록",
-    version="5.2.0-markdown"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 마크다운 테이블 반환",
+    version="5.3.0-markdown"
 )
 
 app.add_middleware(
@@ -31,6 +31,21 @@ KNOWN_LAWS = {
 }
 
 recent_logs = []
+
+@app.get("/")
+def root():
+    return {"msg": "School LawBot API is live (root ok)"}
+
+@app.get("/ping")
+def ping():
+    return {"msg": "ping ok"}
+
+# 파라미터 없이도 /law 접속 시 안내 메시지
+@app.get("/law")
+def law_root():
+    return {
+        "msg": "법령명, 조문, 항, 호 등 파라미터와 함께 호출하세요. 예시: /law?law_name=학교폭력예방법&article_no=16"
+    }
 
 def resolve_full_law_name(law_name: str) -> str:
     name = law_name.replace(" ", "").strip()
@@ -131,14 +146,21 @@ def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, �
         f"| 출처 | [국가법령정보센터 바로가기]({법령링크}) |\n"
     )
 
-@app.get("/law", summary="법령 조문 조회")
+# 실제 법령 조회 엔드포인트 (파라미터 필수)
+@app.get("/law", summary="법령 조문 조회(파라미터 필수)")
 def get_law_clause(
-    law_name: str = Query(..., example="학교폭력예방법"),
-    article_no: str = Query(..., example="16"),
+    law_name: str = Query(None, example="학교폭력예방법"),
+    article_no: str = Query(None, example="16"),
     clause_no: Optional[str] = Query(None),
     subclause_no: Optional[str] = Query(None),
     request: Request = None
 ):
+    # 파라미터 없이 호출 시 안내 메시지
+    if not law_name or not article_no:
+        return {
+            "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법&article_no=16"
+        }
+
     api_key = API_KEY
     log_entry = {
         "timestamp": datetime.datetime.now().isoformat(),
