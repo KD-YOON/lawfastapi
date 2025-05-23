@@ -187,7 +187,7 @@ def get_law_clause(
             "호": f"{subclause_no}호" if subclause_no else "",
             "내용": 내용,
             "법령링크": law_url,
-            "markdown": markdown    # 🟢 마크다운 테이블 포함!
+            "markdown": markdown
         }
         log_entry["status"] = "success"
         log_entry["result"] = result
