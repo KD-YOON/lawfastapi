@@ -14,7 +14,7 @@ API_KEY = os.environ.get("OC_KEY", "default_key")  # Render 대시보드에 등�
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 요청 로그 기록",
-    version="5.3.0-clause-link-markdown"
+    version="5.3.1-clause-link-markdown"
 )
 
 app.add_middleware(
@@ -132,16 +132,12 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     except Exception as e:
         return f"파싱 오류: {e}"
 
-# ★ 출처 링크 자동 생성 함수 (항, 호, 시행령까지 지원)
-def make_law_url(law_name_full, article_no=None, clause_no=None, subclause_no=None):
+# 🚩 출처 링크는 조문까지만!
+def make_law_url(law_name_full, article_no=None):
     law_name_url = law_name_full.replace(" ", "")
     url = f"https://www.law.go.kr/법령/{quote(law_name_url)}"
     if article_no:
         url += f"/제{article_no}조"
-    if clause_no:
-        url += f"/제{clause_no}항"
-    if subclause_no:
-        url += f"/{subclause_no}호"
     return url
 
 def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, 법령링크):
@@ -208,7 +204,7 @@ def get_law_clause(
                 recent_logs.pop(0)
             return JSONResponse(content={"error": "해당 법령은 조회할 수 없습니다."}, status_code=403)
         내용 = extract_article(res.text, article_no, clause_no, subclause_no)
-        law_url = make_law_url(law_name_full, article_no, clause_no, subclause_no)
+        law_url = make_law_url(law_name_full, article_no)
         markdown = make_markdown_table(law_name_full, article_no, clause_no, subclause_no, 내용, law_url)
         result = {
             "source": "api",
