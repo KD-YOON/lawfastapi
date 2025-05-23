@@ -8,13 +8,12 @@ import xmltodict
 import datetime
 import os
 
-# 환경변수에서 OC_KEY(국가법령정보센터 OpenAPI 키) 읽기
-API_KEY = os.environ.get("OC_KEY", "default_key")  # Render 대시보드에 등록된 키와 맞출 것
+API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 요청 로그 기록",
-    version="5.3.1-clause-link-markdown"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 마크다운 테이블 반환",
+    version="5.3.2-urlfix-markdown"
 )
 
 app.add_middleware(
@@ -132,15 +131,17 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
     except Exception as e:
         return f"파싱 오류: {e}"
 
-# 🚩 출처 링크는 조문까지만!
+# 🚩 출처 링크: 한글만 quote, 조문까지만!
 def make_law_url(law_name_full, article_no=None):
-    law_name_url = law_name_full.replace(" ", "")
-    url = f"https://www.law.go.kr/법령/{quote(law_name_url)}"
+    law_name_url = quote(law_name_full.replace(" ", ""))
+    url = f"https://www.law.go.kr/법령/{law_name_url}"
     if article_no:
         url += f"/제{article_no}조"
     return url
 
 def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, 법령링크):
+    # 파이프, 줄바꿈 등 마크다운 안전처리
+    내용_fmt = 내용.replace("|", "\\|").replace("\n", "<br>")
     return (
         "| 항목 | 내용 |\n"
         "|------|------|\n"
@@ -148,7 +149,7 @@ def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, �
         f"| 조문 | {'제'+str(article_no)+'조' if article_no else ''} |\n"
         f"| 항 | {str(clause_no)+'항' if clause_no else ''} |\n"
         f"| 호 | {str(subclause_no)+'호' if subclause_no else ''} |\n"
-        f"| 내용 | {내용} |\n"
+        f"| 내용 | {내용_fmt} |\n"
         f"| 출처 | [국가법령정보센터 바로가기]({법령링크}) |\n"
     )
 
