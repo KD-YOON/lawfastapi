@@ -142,7 +142,7 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None),
     api_key: str = Query(..., description="GPTs에서 전달되는 API 키")
 ):
-    # 필수 파라미터 체크
+    print(f"요청: law_name={law_name}, article_no={article_no}, clause_no={clause_no}, subclause_no={subclause_no}, api_key={api_key}")
     if not api_key:
         return JSONResponse(
             content={
@@ -155,6 +155,7 @@ def get_law_clause(
         law_name_full = resolve_full_law_name(law_name)
         law_id = get_law_id(law_name_full, api_key)
         if not law_id:
+            print("[lawId] 조회 실패", law_name_full)
             return JSONResponse(
                 content={
                     "error": "법령 ID 조회 실패",
@@ -172,6 +173,7 @@ def get_law_clause(
         })
         res.raise_for_status()
         if "법령이 없습니다" in res.text:
+            print("[lawService] 결과 없음", law_name_full)
             return JSONResponse(
                 content={
                     "error": "해당 법령은 조회할 수 없습니다.",
@@ -182,6 +184,7 @@ def get_law_clause(
         내용 = extract_article(res.text, article_no, clause_no, subclause_no)
         # 조문, 항, 호 데이터 미존재 시 안내
         if "요청한" in 내용 or "파싱 오류" in 내용:
+            print("[조문 파싱 오류]", 내용)
             return JSONResponse(
                 content={
                     "error": 내용,
@@ -189,6 +192,7 @@ def get_law_clause(
                 },
                 status_code=404
             )
+        # 정상 응답에는 안내문구 X
         return JSONResponse(content={
             "source": "api",
             "출처": "lawService",
@@ -200,7 +204,7 @@ def get_law_clause(
             "법령링크": f"https://www.law.go.kr/법령/{quote(law_name_full, safe='')}/{article_no}조"
         })
     except Exception as e:
-        print("🚨 API 에러:", e)
+        print("🚨 [API 에러]:", e)
         return JSONResponse(
             content={
                 "error": "API 호출 실패",
