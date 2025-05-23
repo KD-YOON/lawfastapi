@@ -26,6 +26,13 @@ KNOWN_LAWS = {
     # 추가 약칭은 여기!
 }
 
+PRIVACY_MSG = (
+    "⚠️ 실시간 법령 정보 조회를 위해 아래 '허용하기' 버튼을 클릭해 주세요.\n"
+    "허용하지 않으면 요약 안내(fallback)만 제공됩니다.\n"
+    "이 서비스는 개인정보를 저장하지 않으며, 입력 정보는 법령 조회에만 사용됩니다.\n"
+    "🔗 [개인정보보호방침 보기](https://github.com/KD-YOON/privacy-policy)\n"
+)
+
 @app.get("/")
 @app.head("/")
 def root():
@@ -45,11 +52,10 @@ def ping():
 def privacy_policy():
     return {
         "message": "본 서비스의 개인정보 처리방침은 다음 링크에서 확인할 수 있습니다.",
-        "url": "https://YOURDOMAIN.com/privacy-policy"
+        "url": "https://github.com/KD-YOON/privacy-policy"
     }
 
 def resolve_full_law_name(law_name: str) -> str:
-    # 약칭 입력시 정식 명칭으로 변환
     name = law_name.replace(" ", "").strip()
     for k, v in KNOWN_LAWS.items():
         if name == k.replace(" ", ""):
@@ -119,7 +125,6 @@ def extract_article(xml_text, article_no, clause_no=None, subclause_no=None):
                         if isinstance(subclauses, dict):
                             subclauses = [subclauses]
                         for sub in subclauses:
-                            # "1.", "2." 등으로 오면 .제거해서 비교
                             sub_num = sub.get("호번호", "").replace(".", "")
                             if sub_num == str(subclause_no):
                                 return sub.get("호내용", "내용 없음")
@@ -137,11 +142,26 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None),
     api_key: str = Query(..., description="GPTs에서 전달되는 API 키")
 ):
+    # 필수 파라미터 체크
+    if not api_key:
+        return JSONResponse(
+            content={
+                "error": "API 키가 누락되었습니다.",
+                "message": PRIVACY_MSG
+            }, 
+            status_code=401
+        )
     try:
         law_name_full = resolve_full_law_name(law_name)
         law_id = get_law_id(law_name_full, api_key)
         if not law_id:
-            return JSONResponse(content={"error": "법령 ID 조회 실패"}, status_code=404)
+            return JSONResponse(
+                content={
+                    "error": "법령 ID 조회 실패",
+                    "message": PRIVACY_MSG
+                }, 
+                status_code=404
+            )
         res = requests.get("https://www.law.go.kr/DRF/lawService.do", params={
             "OC": api_key,
             "target": "law",
@@ -152,8 +172,23 @@ def get_law_clause(
         })
         res.raise_for_status()
         if "법령이 없습니다" in res.text:
-            return JSONResponse(content={"error": "해당 법령은 조회할 수 없습니다."}, status_code=403)
+            return JSONResponse(
+                content={
+                    "error": "해당 법령은 조회할 수 없습니다.",
+                    "message": PRIVACY_MSG
+                },
+                status_code=403
+            )
         내용 = extract_article(res.text, article_no, clause_no, subclause_no)
+        # 조문, 항, 호 데이터 미존재 시 안내
+        if "요청한" in 내용 or "파싱 오류" in 내용:
+            return JSONResponse(
+                content={
+                    "error": 내용,
+                    "message": PRIVACY_MSG
+                },
+                status_code=404
+            )
         return JSONResponse(content={
             "source": "api",
             "출처": "lawService",
@@ -166,4 +201,10 @@ def get_law_clause(
         })
     except Exception as e:
         print("🚨 API 에러:", e)
-        return JSONResponse(content={"error": "API 호출 실패"}, status_code=500)
+        return JSONResponse(
+            content={
+                "error": "API 호출 실패",
+                "message": PRIVACY_MSG
+            },
+            status_code=500
+        )
