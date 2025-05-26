@@ -13,11 +13,10 @@ from bs4 import BeautifulSoup
 PRIVACY_URL = "https://github.com/KD-YOON/privacy-policy"
 PRIVACY_NOTICE = (
     "본 서비스의 개인정보 처리방침은 https://github.com/KD-YOON/privacy-policy 에서 확인할 수 있습니다. "
-    "※ 동의/허용 안내는 클라이언트(웹/앱/챗봇)에서 동의 이력을 관리해 안내 반복 방지."
+    "※ 동의/허용 안내 반복 방지는 반드시 프론트(웹/앱/챗봇)에서 동의 이력 저장 및 제어해야 합니다."
 )
 
 def add_privacy_notice(data):
-    # 항상 안내 필드 추가 (동의 이력 체크/반복 안내 방지는 프론트에서 구현)
     if isinstance(data, dict):
         data['privacy_notice'] = PRIVACY_NOTICE
         data['privacy_policy_url'] = PRIVACY_URL
@@ -28,7 +27,7 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 + 분조(가지번호) 완전 자동화",
-    version="7.1.0"
+    version="7.2.0"
 )
 
 app.add_middleware(
@@ -107,14 +106,13 @@ def fetch_article_html_fallback(law_name_full, article_no):
         article_url = f"https://www.law.go.kr/법령/{law_url_name}/제{str(article_no).replace(' ','')}"
         res = requests.get(article_url, timeout=7)
         res.raise_for_status()
-        # 국가법령정보센터 구조 변화 대응 (여러 selector 중 가장 널리 사용되는 것 우선)
         soup = BeautifulSoup(res.text, "html.parser")
         selectors = [
             ".law-article .article",
             ".article",
             ".law-article",
-            "#article",      # 일부 페이지는 ID 사용
-            ".cont_article", # 과거 버전
+            "#article",
+            ".cont_article",
         ]
         main = None
         for sel in selectors:
@@ -129,6 +127,7 @@ def fetch_article_html_fallback(law_name_full, article_no):
 def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclause_no=None, law_name_full=None):
     circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
     target_no, target_subno = parse_article_input(article_no_raw)
+    canonical_article_no = None
     try:
         data = xmltodict.parse(xml_text)
         law = data.get("법령", {})
@@ -139,7 +138,6 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
         for article in articles:
             no_raw = str(article.get("조문번호", "0"))
             subno_raw = article.get("조문가지번호")
-            # (가지조문 파싱: "14조의3" 같이 합쳐진 케이스까지)
             no_m = re.match(r"(\d+)조의(\d+)", no_raw)
             if no_m:
                 no = int(no_m.group(1))
@@ -155,16 +153,16 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                         subno = int(str(subno_raw))
                     except:
                         subno = None
-            available.append(
-                f"{no}조의{subno}" if subno is not None else f"{no}조"
-            )
+            this_article_name = f"제{no}조의{subno}" if subno is not None else f"제{no}조"
+            available.append(this_article_name)
             if no == target_no and (
                 subno == target_subno or
                 (target_subno is None and subno is None)
             ):
+                canonical_article_no = this_article_name
                 full_article = article.get("조문내용", "내용 없음")
                 if not clause_no:
-                    return full_article, full_article, available
+                    return full_article, full_article, available, canonical_article_no
                 clauses = article.get("항", [])
                 if isinstance(clauses, dict):
                     clauses = [clauses]
@@ -173,29 +171,32 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                     cnum_arabic = circled_nums.get(cnum, cnum)
                     if cnum_arabic == str(clause_no) or cnum == str(clause_no):
                         clause_content = clause.get("항내용", "내용 없음")
-                        return clause_content, full_article, available
-                return "요청한 항을 찾을 수 없습니다.", full_article, available
-        # API/HTML 모두 조문 추출 실패
+                        return clause_content, full_article, available, canonical_article_no
+                return "요청한 항을 찾을 수 없습니다.", full_article, available, canonical_article_no
+        # 조문 본문 추출 실패 시
         if law_name_full and article_no_raw:
             html_text = fetch_article_html_fallback(law_name_full, article_no_raw)
+            canonical_article_no = None  # fallback은 입력값 그대로 씀
             return (
-                f"(API에서 조문 미발견, HTML로 추출) {html_text}",
-                html_text,
-                available
+                f"해당 조문(가지조문 등)은 시스템에서 자동 추출이 불가합니다.<br>"
+                f"아래 국가법령정보센터 바로가기를 확인해 주세요.",
+                "",
+                available,
+                canonical_article_no
             )
         return (
             f"요청한 조문({article_no_raw})을 찾을 수 없습니다. (실제 조문번호: {', '.join(available)})",
             "",
-            available
+            available,
+            None
         )
     except Exception as e:
-        return f"파싱 오류: {e}", "", []
+        return f"파싱 오류: {e}", "", [], None
 
 def make_law_url(law_name_full, article_no=None):
     law_name_url = quote(law_name_full.replace(" ", ""))
     url = f"https://www.law.go.kr/법령/{law_name_url}"
     if article_no:
-        # "제 14조의 3" → "제14조의3" (띄어쓰기 없이 붙임)
         art = str(article_no).replace(" ", "")
         url += f"/{art}"
     return url
@@ -289,14 +290,33 @@ def get_law_clause(
             if len(recent_logs) > 50:
                 recent_logs.pop(0)
             return JSONResponse(content=add_privacy_notice({"error": "해당 법령은 조회할 수 없습니다."}), status_code=403)
-        내용, 조문전체, available_articles = extract_article_with_full(res.text, article_no, clause_no, subclause_no, law_name_full)
-        law_url = make_law_url(law_name_full, article_no)
-        markdown = make_markdown_table(law_name_full, article_no, clause_no, subclause_no, 내용, law_url, 조문전체, available_articles)
+        # --- 본문, canonical_article_no(실제 존재하는 조문명) 함께 반환!
+        내용, 조문전체, available_articles, canonical_article_no = extract_article_with_full(
+            res.text, article_no, clause_no, subclause_no, law_name_full
+        )
+        # --- 링크는 반드시 실제 파싱된 조문명(없으면 입력값 fallback)으로 생성
+        law_url = make_law_url(law_name_full, canonical_article_no or article_no)
+        # --- 내용이 신뢰불가면 안내문구+링크만 안내
+        if not 내용 or 내용 in [
+            "내용 없음",
+            "요청한 조문을 찾을 수 없습니다.",
+            "HTML에서 조문 본문을 찾을 수 없습니다."
+        ] or 내용.startswith("(API에서 조문 미발견") or 내용.startswith("해당 조문(가지조문 등)은 시스템에서"):
+            안내 = (
+                f"해당 조문(가지조문 등)은 시스템에서 자동 추출이 불가합니다.<br>"
+                f"아래 국가법령정보센터 바로가기에서 직접 확인해 주세요."
+            )
+            내용 = 안내
+            조문전체 = ""
+        markdown = make_markdown_table(
+            law_name_full, canonical_article_no or article_no,
+            clause_no, subclause_no, 내용, law_url, 조문전체, available_articles
+        )
         result = {
             "source": "api",
             "출처": "lawService+HTMLfallback",
             "법령명": law_name_full,
-            "조문": f"{article_no}" if article_no else "",
+            "조문": f"{canonical_article_no or article_no}" if article_no else "",
             "항": f"{clause_no}항" if clause_no else "",
             "호": f"{subclause_no}호" if subclause_no else "",
             "내용": 내용,
