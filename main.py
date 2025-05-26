@@ -13,8 +13,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 마크다운 테이블 반환 + 조문번호 정규화(띄어쓰기까지 지원)",
-    version="5.6.0-article-normalize-space"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 마크다운 테이블 반환 + 조문번호 정규화(띄어쓰기, '의' 완전 대응)",
+    version="5.7.0-final"
 )
 
 app.add_middleware(
@@ -75,11 +75,17 @@ def normalize_article_no(article_no: str) -> str:
     '14조의 3' → '14조의3'
     '14조'     → '14조'
     """
+    if not article_no:
+        return ""
     s = article_no.replace(" ", "")
     m = re.match(r"제?(\d+조(의\d+)?)", s)
     if m:
         return m.group(1)
     return s
+
+def is_article_no_equal(a: str, b: str) -> bool:
+    # 모두 공백 제거, '의' 표기 구분 없이 비교
+    return a.replace(" ", "") == b.replace(" ", "")
 
 def get_law_id(law_name: str, api_key: str) -> Optional[str]:
     normalized = normalize_law_name(law_name)
@@ -113,7 +119,7 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
         print("[lawId 오류]", e)
         return None
 
-# 항/호 내용과 조문 전체 동시 추출, 조문번호 정규화(띄어쓰기까지)!
+# 항/호 내용과 조문 전체 동시 추출, 조문번호 정규화 및 실존 조문 목록 반환
 def extract_article_with_full(xml_text, article_no, clause_no=None, subclause_no=None):
     circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
     article_no_norm = normalize_article_no(article_no)
@@ -123,11 +129,12 @@ def extract_article_with_full(xml_text, article_no, clause_no=None, subclause_no
         articles = law.get("조문", {}).get("조문단위", [])
         if isinstance(articles, dict):
             articles = [articles]
+        available = [a.get("조문번호", "") for a in articles]
         for article in articles:
-            if article.get("조문번호") == article_no_norm:
+            if is_article_no_equal(article.get("조문번호", ""), article_no_norm):
                 full_article = article.get("조문내용", "내용 없음")
                 if not clause_no:
-                    return full_article, full_article
+                    return full_article, full_article, available
                 clauses = article.get("항", [])
                 if isinstance(clauses, dict):
                     clauses = [clauses]
@@ -136,11 +143,12 @@ def extract_article_with_full(xml_text, article_no, clause_no=None, subclause_no
                     cnum_arabic = circled_nums.get(cnum, cnum)
                     if cnum_arabic == str(clause_no) or cnum == str(clause_no):
                         clause_content = clause.get("항내용", "내용 없음")
-                        return clause_content, full_article
-                return "요청한 항을 찾을 수 없습니다.", full_article
-        return "요청한 조문을 찾을 수 없습니다.", ""
+                        return clause_content, full_article, available
+                return "요청한 항을 찾을 수 없습니다.", full_article, available
+        # 조문이 없을 경우 전체 존재 조문목록 반환
+        return (f"요청한 조문({article_no_norm})을 찾을 수 없습니다. (실제 조문번호: {', '.join(available)})", "", available)
     except Exception as e:
-        return f"파싱 오류: {e}", ""
+        return f"파싱 오류: {e}", "", []
 
 def make_law_url(law_name_full, article_no=None):
     law_name_url = quote(law_name_full.replace(" ", ""))
@@ -150,10 +158,10 @@ def make_law_url(law_name_full, article_no=None):
         url += f"/제{article_no_norm}"
     return url
 
-def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, 법령링크, 조문전체):
+def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, 법령링크, 조문전체, available_articles=None):
     내용_fmt = 내용.replace("|", "\\|").replace("\n", "<br>")
     조문전체_fmt = 조문전체.replace("|", "\\|").replace("\n", "<br>")
-    return (
+    tbl = (
         "| 항목 | 내용 |\n"
         "|------|------|\n"
         f"| 법령명 | {law_name} |\n"
@@ -164,6 +172,9 @@ def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, �
         f"| 조문 전체 | {조문전체_fmt} |\n"
         f"| 출처 | [국가법령정보센터 바로가기]({법령링크}) |\n"
     )
+    if available_articles:
+        tbl += f"| 조회가능 조문번호 | {', '.join(available_articles)} |\n"
+    return tbl
 
 @app.get("/law", summary="법령 조문 조회")
 @app.head("/law")
@@ -215,9 +226,9 @@ def get_law_clause(
             if len(recent_logs) > 50:
                 recent_logs.pop(0)
             return JSONResponse(content={"error": "해당 법령은 조회할 수 없습니다."}, status_code=403)
-        내용, 조문전체 = extract_article_with_full(res.text, article_no, clause_no, subclause_no)
+        내용, 조문전체, available_articles = extract_article_with_full(res.text, article_no, clause_no, subclause_no)
         law_url = make_law_url(law_name_full, article_no)
-        markdown = make_markdown_table(law_name_full, article_no, clause_no, subclause_no, 내용, law_url, 조문전체)
+        markdown = make_markdown_table(law_name_full, article_no, clause_no, subclause_no, 내용, law_url, 조문전체, available_articles)
         result = {
             "source": "api",
             "출처": "lawService",
@@ -228,7 +239,8 @@ def get_law_clause(
             "내용": 내용,
             "조문전체": 조문전체,
             "법령링크": law_url,
-            "markdown": markdown
+            "markdown": markdown,
+            "조문목록": available_articles
         }
         log_entry["status"] = "success"
         log_entry["result"] = result
