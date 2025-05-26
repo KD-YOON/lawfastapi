@@ -14,8 +14,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 + HTML fallback 자동 크롤링 통합",
-    version="6.0.0-fallback"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 + HTML fallback + 조문/항 자동구분",
+    version="6.1.0-smart"
 )
 
 app.add_middleware(
@@ -51,7 +51,45 @@ def normalize_article_no(article_no: str) -> str:
     m = re.match(r"제?(\d+조(의\d+)?)", s)
     if m:
         return m.group(1)
+    # 예외처리: '제14조제3항', '14조3항' 등은 분리 필요
+    m2 = re.match(r"제?(\d+조)제?(\d+)항", s)
+    if m2:
+        return m2.group(1)  # '14조'
     return s
+
+def parse_article_and_clause(article_no_raw, clause_no=None):
+    """
+    - '제14조의3' → ('14조의3', None)
+    - '제14조 제3항' → ('14조', '3')
+    - '14조의3' → ('14조의3', None)
+    - '14조 3항' → ('14조', '3')
+    - '제14조' → ('14조', None)
+    - '14조' → ('14조', None)
+    - clause_no가 따로 입력됐으면 우선 적용
+    """
+    if not article_no_raw:
+        return "", None
+    s = article_no_raw.replace(" ", "")
+    # 분조(의) 우선 인식
+    m = re.match(r"제?(\d+조의\d+)$", s)
+    if m:
+        return (m.group(1), None)
+    # '제14조제3항' or '14조3항' 형태
+    m2 = re.match(r"제?(\d+조)제?(\d+)항", s)
+    if m2:
+        return (m2.group(1), m2.group(2))
+    # '제14조', '14조'
+    m3 = re.match(r"제?(\d+조)$", s)
+    if m3:
+        return (m3.group(1), clause_no)
+    # '14조의3', '14조'
+    if "의" in s:
+        return (s, None)
+    # '14조3항' 등 예외처리
+    m4 = re.match(r"(\d+조)(\d+)항", s)
+    if m4:
+        return (m4.group(1), m4.group(2))
+    return (s, clause_no)
 
 def is_article_no_equal(a: str, b: str) -> bool:
     return a.replace(" ", "") == b.replace(" ", "")
@@ -89,14 +127,12 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
         return None
 
 def fetch_article_html_fallback(law_name_full, article_no):
-    """API에서 누락된 조문을 HTML로 크롤링하는 fallback 함수"""
     try:
         law_url_name = quote(law_name_full.replace(' ', ''))
         article_url = f"https://www.law.go.kr/법령/{law_url_name}/제{normalize_article_no(article_no)}"
         res = requests.get(article_url, timeout=7)
         res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
-        # 조문 본문 CSS 셀렉터는 실제 페이지 구조에 따라 다를 수 있음. 아래는 예시!
         main = soup.select_one(".law-article .article") or soup.select_one(".article") or soup.select_one(".law-article")
         text = main.get_text(separator="\n", strip=True) if main else "HTML에서 조문 본문을 찾을 수 없습니다."
         return text
@@ -193,6 +229,11 @@ def get_law_clause(
     subclause_no: Optional[str] = Query(None),
     request: Request = None
 ):
+    # 🔥 입력값을 자동구분해서 article_no, clause_no 확정!
+    pre_article_no, pre_clause_no = parse_article_and_clause(article_no, clause_no)
+    article_no = pre_article_no
+    clause_no = pre_clause_no
+
     if not law_name or not article_no:
         return {
             "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법시행령&article_no=제14조의 3"
