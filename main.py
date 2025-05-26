@@ -7,13 +7,14 @@ import requests
 import xmltodict
 import datetime
 import os
+import re
 
 API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 마크다운 테이블 반환 + UX 향상",
-    version="5.4.0-ux"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 마크다운 테이블 반환 + 조문번호 정규화",
+    version="5.5.0-article-normalize"
 )
 
 app.add_middleware(
@@ -28,6 +29,7 @@ KNOWN_LAWS = {
     "학교폭력예방법": "학교폭력예방 및 대책에 관한 법률",
     "학교폭력예방법 시행령": "학교폭력예방 및 대책에 관한 법률 시행령",
     "개인정보보호법": "개인정보 보호법",
+    # 추가 약칭은 여기!
 }
 
 recent_logs = []
@@ -64,6 +66,18 @@ def resolve_full_law_name(law_name: str) -> str:
 def normalize_law_name(name: str) -> str:
     return name.replace(" ", "").strip()
 
+def normalize_article_no(article_no: str) -> str:
+    """
+    '제14조의3' → '14조의3'
+    '제14조'   → '14조'
+    '14조의3'  → '14조의3'
+    '14조'     → '14조'
+    """
+    m = re.match(r"제?(\d+조(?:의\d+)?)", article_no)
+    if m:
+        return m.group(1)
+    return article_no
+
 def get_law_id(law_name: str, api_key: str) -> Optional[str]:
     normalized = normalize_law_name(law_name)
     try:
@@ -96,9 +110,10 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
         print("[lawId 오류]", e)
         return None
 
-# 항/호 내용과 조문 전체 동시 추출
+# 항/호 내용과 조문 전체 동시 추출, 조문번호 정규화!
 def extract_article_with_full(xml_text, article_no, clause_no=None, subclause_no=None):
     circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
+    article_no_norm = normalize_article_no(article_no)
     try:
         data = xmltodict.parse(xml_text)
         law = data.get("법령", {})
@@ -106,7 +121,7 @@ def extract_article_with_full(xml_text, article_no, clause_no=None, subclause_no
         if isinstance(articles, dict):
             articles = [articles]
         for article in articles:
-            if article.get("조문번호") == str(article_no):
+            if article.get("조문번호") == article_no_norm:
                 full_article = article.get("조문내용", "내용 없음")
                 if not clause_no:
                     return full_article, full_article
@@ -124,12 +139,12 @@ def extract_article_with_full(xml_text, article_no, clause_no=None, subclause_no
     except Exception as e:
         return f"파싱 오류: {e}", ""
 
-# 한글만 quote, 조문까지만 링크
 def make_law_url(law_name_full, article_no=None):
     law_name_url = quote(law_name_full.replace(" ", ""))
     url = f"https://www.law.go.kr/법령/{law_name_url}"
     if article_no:
-        url += f"/제{article_no}조"
+        article_no_norm = normalize_article_no(article_no)
+        url += f"/제{article_no_norm}"
     return url
 
 def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, 법령링크, 조문전체):
@@ -151,14 +166,14 @@ def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, �
 @app.head("/law")
 def get_law_clause(
     law_name: str = Query(None, example="학교폭력예방법"),
-    article_no: str = Query(None, example="16"),
+    article_no: str = Query(None, example="14조의3"),
     clause_no: Optional[str] = Query(None),
     subclause_no: Optional[str] = Query(None),
     request: Request = None
 ):
     if not law_name or not article_no:
         return {
-            "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법&article_no=16"
+            "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법시행령&article_no=14조의3"
         }
 
     api_key = API_KEY
