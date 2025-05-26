@@ -10,12 +10,23 @@ import os
 import re
 from bs4 import BeautifulSoup
 
+# 개인정보처리방침 안내
+PRIVACY_URL = "https://github.com/KD-YOON/privacy-policy"
+PRIVACY_NOTICE = "본 서비스의 개인정보 처리방침은 https://github.com/KD-YOON/privacy-policy 에서 확인할 수 있습니다. 신뢰할 수 있는 사이트 또는 항상 허용을 선택하셨다면 안내는 다시 나오지 않습니다."
+
+def add_privacy_notice(data):
+    # dict 결과에 개인정보처리방침 안내 필드 자동 추가
+    if isinstance(data, dict):
+        data['privacy_notice'] = PRIVACY_NOTICE
+        data['privacy_policy_url'] = PRIVACY_URL
+    return data
+
 API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 + 분조(가지번호) 완전 자동화",
-    version="7.0.0-article-branch"
+    version="7.0.1-article-branch-privacy"
 )
 
 app.add_middleware(
@@ -44,13 +55,8 @@ def resolve_full_law_name(law_name: str) -> str:
 def normalize_law_name(name: str) -> str:
     return name.replace(" ", "").strip()
 
-# ⭐⭐⭐ 핵심: 조문번호와 분조(가지번호) 자동 분리
+# 조문번호/가지번호 자동 분리
 def parse_article_input(article_no_raw):
-    """
-    '제14조의2' / '14조의2' / '14조의 2' / '14 조의 2' → (14, 2)
-    '제14조' / '14조' / '14 조' → (14, None)
-    기타 → (None, None)
-    """
     if not article_no_raw:
         return None, None
     s = article_no_raw.replace(" ", "")
@@ -109,7 +115,6 @@ def fetch_article_html_fallback(law_name_full, article_no):
 
 def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclause_no=None, law_name_full=None):
     circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
-    # 입력 파라미터 분리
     target_no, target_subno = parse_article_input(article_no_raw)
     try:
         data = xmltodict.parse(xml_text)
@@ -119,13 +124,25 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
             articles = [articles]
         available = []
         for article in articles:
-            no = int(article.get("조문번호", "0"))
-            subno = int(article.get("조문가지번호", "0")) if article.get("조문가지번호") else None
+            no_raw = article.get("조문번호", "0")
+            no = int(no_raw) if str(no_raw).isdigit() else 0
+            subno_raw = article.get("조문가지번호")
+            if subno_raw in [None, '', '0', 0]:
+                subno = None
+            elif str(subno_raw).isdigit():
+                subno = int(subno_raw)
+            else:
+                try:
+                    subno = int(str(subno_raw))
+                except:
+                    subno = None
             available.append(
                 f"{no}조의{subno}" if subno is not None else f"{no}조"
             )
-            # ⭐⭐⭐ 조문번호+가지번호 완전 매칭
-            if no == target_no and (subno == target_subno or (target_subno is None and (subno is None or subno == 0))):
+            if no == target_no and (
+                subno == target_subno or
+                (target_subno is None and subno is None)
+            ):
                 full_article = article.get("조문내용", "내용 없음")
                 if not clause_no:
                     return full_article, full_article, available
@@ -139,7 +156,6 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                         clause_content = clause.get("항내용", "내용 없음")
                         return clause_content, full_article, available
                 return "요청한 항을 찾을 수 없습니다.", full_article, available
-        # API에서 조문 미발견: HTML fallback 자동 호출
         if law_name_full and article_no_raw:
             html_text = fetch_article_html_fallback(law_name_full, article_no_raw)
             return f"(API에서 조문 미발견, HTML로 추출) {html_text}", html_text, available
@@ -175,24 +191,24 @@ def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, �
 @app.get("/")
 @app.head("/")
 def root():
-    return {"message": "School LawBot API is running."}
+    return add_privacy_notice({"message": "School LawBot API is running."})
 
 @app.get("/healthz")
 @app.head("/healthz")
 def health_check():
-    return {"status": "ok"}
+    return add_privacy_notice({"status": "ok"})
 
 @app.get("/ping")
 @app.head("/ping")
 def ping():
-    return {"status": "ok"}
+    return add_privacy_notice({"status": "ok"})
 
 @app.get("/privacy-policy")
 def privacy_policy():
-    return {
+    return add_privacy_notice({
         "message": "본 서비스의 개인정보 처리방침은 다음 링크에서 확인할 수 있습니다.",
-        "url": "https://github.com/KD-YOON/privacy-policy"
-    }
+        "url": PRIVACY_URL
+    })
 
 @app.get("/law", summary="법령 조문 조회")
 @app.head("/law")
@@ -204,10 +220,9 @@ def get_law_clause(
     request: Request = None
 ):
     if not law_name or not article_no:
-        return {
+        return add_privacy_notice({
             "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법시행령&article_no=제14조의 2"
-        }
-
+        })
     api_key = API_KEY
     log_entry = {
         "timestamp": datetime.datetime.now().isoformat(),
@@ -227,7 +242,7 @@ def get_law_clause(
             recent_logs.append(log_entry)
             if len(recent_logs) > 50:
                 recent_logs.pop(0)
-            return JSONResponse(content={"error": "법령 ID 조회 실패"}, status_code=404)
+            return JSONResponse(content=add_privacy_notice({"error": "법령 ID 조회 실패"}), status_code=404)
         res = requests.get("https://www.law.go.kr/DRF/lawService.do", params={
             "OC": api_key,
             "target": "law",
@@ -243,7 +258,7 @@ def get_law_clause(
             recent_logs.append(log_entry)
             if len(recent_logs) > 50:
                 recent_logs.pop(0)
-            return JSONResponse(content={"error": "해당 법령은 조회할 수 없습니다."}, status_code=403)
+            return JSONResponse(content=add_privacy_notice({"error": "해당 법령은 조회할 수 없습니다."}), status_code=403)
         내용, 조문전체, available_articles = extract_article_with_full(res.text, article_no, clause_no, subclause_no, law_name_full)
         law_url = make_law_url(law_name_full, article_no)
         markdown = make_markdown_table(law_name_full, article_no, clause_no, subclause_no, 내용, law_url, 조문전체, available_articles)
@@ -265,7 +280,7 @@ def get_law_clause(
         recent_logs.append(log_entry)
         if len(recent_logs) > 50:
             recent_logs.pop(0)
-        return JSONResponse(content=result)
+        return JSONResponse(content=add_privacy_notice(result))
     except Exception as e:
         log_entry["status"] = "error"
         log_entry["error"] = str(e)
@@ -273,9 +288,9 @@ def get_law_clause(
         if len(recent_logs) > 50:
             recent_logs.pop(0)
         print("🚨 API 에러:", e)
-        return JSONResponse(content={"error": "API 호출 실패"}, status_code=500)
+        return JSONResponse(content=add_privacy_notice({"error": "API 호출 실패"}), status_code=500)
 
 @app.get("/test-log", summary="최근 요청 로그 10건 조회")
 @app.head("/test-log")
 def test_log():
-    return {"recent_logs": recent_logs[-10:]}
+    return add_privacy_notice({"recent_logs": recent_logs[-10:]})
