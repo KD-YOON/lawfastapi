@@ -14,8 +14,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 + HTML fallback + 조문/항 자동구분",
-    version="6.1.0-smart"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 + 분조(가지번호) 완전 자동화",
+    version="7.0.0-article-branch"
 )
 
 app.add_middleware(
@@ -44,55 +44,23 @@ def resolve_full_law_name(law_name: str) -> str:
 def normalize_law_name(name: str) -> str:
     return name.replace(" ", "").strip()
 
-def normalize_article_no(article_no: str) -> str:
-    if not article_no:
-        return ""
-    s = article_no.replace(" ", "")
-    m = re.match(r"제?(\d+조(의\d+)?)", s)
-    if m:
-        return m.group(1)
-    # 예외처리: '제14조제3항', '14조3항' 등은 분리 필요
-    m2 = re.match(r"제?(\d+조)제?(\d+)항", s)
-    if m2:
-        return m2.group(1)  # '14조'
-    return s
-
-def parse_article_and_clause(article_no_raw, clause_no=None):
+# ⭐⭐⭐ 핵심: 조문번호와 분조(가지번호) 자동 분리
+def parse_article_input(article_no_raw):
     """
-    - '제14조의3' → ('14조의3', None)
-    - '제14조 제3항' → ('14조', '3')
-    - '14조의3' → ('14조의3', None)
-    - '14조 3항' → ('14조', '3')
-    - '제14조' → ('14조', None)
-    - '14조' → ('14조', None)
-    - clause_no가 따로 입력됐으면 우선 적용
+    '제14조의2' / '14조의2' / '14조의 2' / '14 조의 2' → (14, 2)
+    '제14조' / '14조' / '14 조' → (14, None)
+    기타 → (None, None)
     """
     if not article_no_raw:
-        return "", None
+        return None, None
     s = article_no_raw.replace(" ", "")
-    # 분조(의) 우선 인식
-    m = re.match(r"제?(\d+조의\d+)$", s)
+    m = re.match(r"제?(\d+)조의(\d+)", s)
     if m:
-        return (m.group(1), None)
-    # '제14조제3항' or '14조3항' 형태
-    m2 = re.match(r"제?(\d+조)제?(\d+)항", s)
-    if m2:
-        return (m2.group(1), m2.group(2))
-    # '제14조', '14조'
-    m3 = re.match(r"제?(\d+조)$", s)
-    if m3:
-        return (m3.group(1), clause_no)
-    # '14조의3', '14조'
-    if "의" in s:
-        return (s, None)
-    # '14조3항' 등 예외처리
-    m4 = re.match(r"(\d+조)(\d+)항", s)
-    if m4:
-        return (m4.group(1), m4.group(2))
-    return (s, clause_no)
-
-def is_article_no_equal(a: str, b: str) -> bool:
-    return a.replace(" ", "") == b.replace(" ", "")
+        return int(m.group(1)), int(m.group(2))
+    m = re.match(r"제?(\d+)조", s)
+    if m:
+        return int(m.group(1)), None
+    return None, None
 
 def get_law_id(law_name: str, api_key: str) -> Optional[str]:
     normalized = normalize_law_name(law_name)
@@ -129,7 +97,7 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
 def fetch_article_html_fallback(law_name_full, article_no):
     try:
         law_url_name = quote(law_name_full.replace(' ', ''))
-        article_url = f"https://www.law.go.kr/법령/{law_url_name}/제{normalize_article_no(article_no)}"
+        article_url = f"https://www.law.go.kr/법령/{law_url_name}/제{article_no}"
         res = requests.get(article_url, timeout=7)
         res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
@@ -139,18 +107,25 @@ def fetch_article_html_fallback(law_name_full, article_no):
     except Exception as e:
         return f"(HTML fallback 오류: {e})"
 
-def extract_article_with_full(xml_text, article_no, clause_no=None, subclause_no=None, law_name_full=None):
+def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclause_no=None, law_name_full=None):
     circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
-    article_no_norm = normalize_article_no(article_no)
+    # 입력 파라미터 분리
+    target_no, target_subno = parse_article_input(article_no_raw)
     try:
         data = xmltodict.parse(xml_text)
         law = data.get("법령", {})
         articles = law.get("조문", {}).get("조문단위", [])
         if isinstance(articles, dict):
             articles = [articles]
-        available = [a.get("조문번호", "") for a in articles]
+        available = []
         for article in articles:
-            if is_article_no_equal(article.get("조문번호", ""), article_no_norm):
+            no = int(article.get("조문번호", "0"))
+            subno = int(article.get("조문가지번호", "0")) if article.get("조문가지번호") else None
+            available.append(
+                f"{no}조의{subno}" if subno is not None else f"{no}조"
+            )
+            # ⭐⭐⭐ 조문번호+가지번호 완전 매칭
+            if no == target_no and (subno == target_subno or (target_subno is None and (subno is None or subno == 0))):
                 full_article = article.get("조문내용", "내용 없음")
                 if not clause_no:
                     return full_article, full_article, available
@@ -165,10 +140,10 @@ def extract_article_with_full(xml_text, article_no, clause_no=None, subclause_no
                         return clause_content, full_article, available
                 return "요청한 항을 찾을 수 없습니다.", full_article, available
         # API에서 조문 미발견: HTML fallback 자동 호출
-        if law_name_full and article_no:
-            html_text = fetch_article_html_fallback(law_name_full, article_no)
+        if law_name_full and article_no_raw:
+            html_text = fetch_article_html_fallback(law_name_full, article_no_raw)
             return f"(API에서 조문 미발견, HTML로 추출) {html_text}", html_text, available
-        return (f"요청한 조문({article_no_norm})을 찾을 수 없습니다. (실제 조문번호: {', '.join(available)})", "", available)
+        return (f"요청한 조문({article_no_raw})을 찾을 수 없습니다. (실제 조문번호: {', '.join(available)})", "", available)
     except Exception as e:
         return f"파싱 오류: {e}", "", []
 
@@ -176,8 +151,7 @@ def make_law_url(law_name_full, article_no=None):
     law_name_url = quote(law_name_full.replace(" ", ""))
     url = f"https://www.law.go.kr/법령/{law_name_url}"
     if article_no:
-        article_no_norm = normalize_article_no(article_no)
-        url += f"/제{article_no_norm}"
+        url += f"/제{article_no}"
     return url
 
 def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, 법령링크, 조문전체, available_articles=None):
@@ -187,7 +161,7 @@ def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, �
         "| 항목 | 내용 |\n"
         "|------|------|\n"
         f"| 법령명 | {law_name} |\n"
-        f"| 조문 | {'제'+str(article_no)+'조' if article_no else ''} |\n"
+        f"| 조문 | {article_no or ''} |\n"
         f"| 항 | {str(clause_no)+'항' if clause_no else ''} |\n"
         f"| 호 | {str(subclause_no)+'호' if subclause_no else ''} |\n"
         f"| 내용 | {내용_fmt} |\n"
@@ -217,26 +191,21 @@ def ping():
 def privacy_policy():
     return {
         "message": "본 서비스의 개인정보 처리방침은 다음 링크에서 확인할 수 있습니다.",
-        "url": "https://YOURDOMAIN.com/privacy-policy"
+        "url": "https://github.com/KD-YOON/privacy-policy"
     }
 
 @app.get("/law", summary="법령 조문 조회")
 @app.head("/law")
 def get_law_clause(
     law_name: str = Query(None, example="학교폭력예방법시행령"),
-    article_no: str = Query(None, example="제14조의 3"),
+    article_no: str = Query(None, example="제14조의 2"),
     clause_no: Optional[str] = Query(None),
     subclause_no: Optional[str] = Query(None),
     request: Request = None
 ):
-    # 🔥 입력값을 자동구분해서 article_no, clause_no 확정!
-    pre_article_no, pre_clause_no = parse_article_and_clause(article_no, clause_no)
-    article_no = pre_article_no
-    clause_no = pre_clause_no
-
     if not law_name or not article_no:
         return {
-            "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법시행령&article_no=제14조의 3"
+            "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법시행령&article_no=제14조의 2"
         }
 
     api_key = API_KEY
@@ -282,7 +251,7 @@ def get_law_clause(
             "source": "api",
             "출처": "lawService+HTMLfallback",
             "법령명": law_name_full,
-            "조문": f"제{article_no}조" if article_no else "",
+            "조문": f"{article_no}" if article_no else "",
             "항": f"{clause_no}항" if clause_no else "",
             "호": f"{subclause_no}호" if subclause_no else "",
             "내용": 내용,
