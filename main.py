@@ -13,8 +13,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 마크다운 테이블 반환 + 조문번호 정규화",
-    version="5.5.0-article-normalize"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호 조회 서비스 + 마크다운 테이블 반환 + 조문번호 정규화(띄어쓰기까지 지원)",
+    version="5.6.0-article-normalize-space"
 )
 
 app.add_middleware(
@@ -69,14 +69,17 @@ def normalize_law_name(name: str) -> str:
 def normalize_article_no(article_no: str) -> str:
     """
     '제14조의3' → '14조의3'
+    '제14조의 3' → '14조의3'
     '제14조'   → '14조'
     '14조의3'  → '14조의3'
+    '14조의 3' → '14조의3'
     '14조'     → '14조'
     """
-    m = re.match(r"제?(\d+조(?:의\d+)?)", article_no)
+    s = article_no.replace(" ", "")
+    m = re.match(r"제?(\d+조(의\d+)?)", s)
     if m:
         return m.group(1)
-    return article_no
+    return s
 
 def get_law_id(law_name: str, api_key: str) -> Optional[str]:
     normalized = normalize_law_name(law_name)
@@ -110,7 +113,7 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
         print("[lawId 오류]", e)
         return None
 
-# 항/호 내용과 조문 전체 동시 추출, 조문번호 정규화!
+# 항/호 내용과 조문 전체 동시 추출, 조문번호 정규화(띄어쓰기까지)!
 def extract_article_with_full(xml_text, article_no, clause_no=None, subclause_no=None):
     circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
     article_no_norm = normalize_article_no(article_no)
@@ -165,15 +168,15 @@ def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, �
 @app.get("/law", summary="법령 조문 조회")
 @app.head("/law")
 def get_law_clause(
-    law_name: str = Query(None, example="학교폭력예방법"),
-    article_no: str = Query(None, example="14조의3"),
+    law_name: str = Query(None, example="학교폭력예방법시행령"),
+    article_no: str = Query(None, example="제14조의 3"),
     clause_no: Optional[str] = Query(None),
     subclause_no: Optional[str] = Query(None),
     request: Request = None
 ):
     if not law_name or not article_no:
         return {
-            "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법시행령&article_no=14조의3"
+            "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법시행령&article_no=제14조의 3"
         }
 
     api_key = API_KEY
