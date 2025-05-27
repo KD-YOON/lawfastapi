@@ -26,8 +26,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·항·호·가지조문 안내 자동화 (2024.05 실전 대응)",
-    version="8.2.0"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·가지조문·항·호 조회, 설계자 실전 대응",
+    version="8.3.0"
 )
 
 app.add_middleware(
@@ -65,21 +65,22 @@ def normalize_article_no(article_no_raw):
     s = re.sub(r"(\d+)조조", r"\1조", s)
     return s
 
-# 조/가지/항/호/가지조문여부 모두 추출
 def parse_article_input(article_no_raw):
+    """조문/가지조문/항/호 정확 판별"""
     if not article_no_raw:
         return None, None, None, None, False
     s = article_no_raw.replace(" ", "")
-    m = re.match(r"제?(\d+)조의(\d+)(?:제(\d+)항)?(?:제(\d+)호)?", s)
+    # 가지조문: 제N조의M (항/호 붙으면 같이 추출)
+    m = re.match(r"제(\d+)조의(\d+)(?:제(\d+)항)?(?:제(\d+)호)?", s)
     if m:
         return int(m.group(1)), int(m.group(2)), int(m.group(3)) if m.group(3) else None, int(m.group(4)) if m.group(4) else None, True
-    m = re.match(r"제?(\d+)조(?:제(\d+)항)?(?:제(\d+)호)?", s)
+    # 일반조문: 제N조 (항/호 붙으면 같이 추출)
+    m = re.match(r"제(\d+)조(?:제(\d+)항)?(?:제(\d+)호)?", s)
     if m:
         return int(m.group(1)), None, int(m.group(2)) if m.group(2) else None, int(m.group(3)) if m.group(3) else None, False
     return None, None, None, None, False
 
 def make_article_link(law_name, article_no):
-    # 국가법령정보센터에서 바로 이동 가능한 해당 조문(가지조문 포함) 링크
     law_url_name = quote(law_name.replace(" ", ""))
     article_path = article_no.replace(" ", "")
     return f"https://www.law.go.kr/법령/{law_url_name}/{article_path}"
@@ -186,13 +187,14 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                 except:
                     this_article_name = str(no_raw)
             available.append(this_article_name)
-            # ★ 입력값과 일치 (공백 제거)
+            # 입력값과 일치 (공백 제거)
             if this_article_name.replace(" ", "") == (article_no_raw or "").replace(" ", ""):
                 canonical_article_no = this_article_name
                 full_article = article.get("조문내용", "내용 없음")
-                # 가지조문: 본문 없으면 안내+정확한 링크
+                # 가지조문: 본문 있으면 반환, 없으면 안내+정확한 링크
                 if is_branch:
                     if full_article and full_article != "내용 없음":
+                        # 가지조문 전체 반환 (항/호 구조 거의 없음)
                         return full_article, full_article, available, canonical_article_no
                     else:
                         안내 = (
@@ -201,7 +203,7 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                             f"<a href='{make_article_link(law_name_full, article_no_raw)}' target='_blank'>국가법령정보센터 {article_no_raw} 바로가기</a>"
                         )
                         return 안내, "", available, canonical_article_no
-                # 일반 조문(항/호까지 지원)
+                # 일반 조문: 전체 본문+항/호 반환
                 if hang is None:
                     return full_article, full_article, available, canonical_article_no
                 clauses = article.get("항", [])
