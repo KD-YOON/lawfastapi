@@ -26,8 +26,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·가지조문·항·호 조회, 설계자 실전 대응 (가지조문 판정+실전로그)",
-    version="8.4.0"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·가지조문·항·호 조회 자동화",
+    version="8.5.0"
 )
 
 app.add_middleware(
@@ -168,15 +168,12 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
             except Exception:
                 continue
         available = []
-        print("=== [실전 LOG] 전체 조문목록 ===")
         for idx, article in enumerate(all_articles):
             no_raw = str(article.get("조문번호", "0"))
             subno_raw = article.get("조문가지번호")
-            # "의" 포함 → 가지조문
             is_gaji = "의" in no_raw
             this_article_name = no_raw
             full_article = article.get("조문내용", "내용 없음")
-            print(f"{idx+1}: 조문명:{this_article_name} | 가지조문:{is_gaji} | 내용:{full_article[:30]}")
             available.append(this_article_name)
             # 입력값과 일치하면 무조건 본문 반환 (가지조문 여부와 무관하게!)
             if this_article_name.replace(" ", "") == (article_no_raw or "").replace(" ", ""):
