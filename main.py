@@ -1,3 +1,6 @@
+import os
+import json
+import re  # [추가]
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,8 +9,6 @@ from urllib.parse import quote
 import requests
 import xmltodict
 import datetime
-import os
-import re
 from bs4 import BeautifulSoup
 
 PRIVACY_URL = "https://github.com/KD-YOON/privacy-policy"
@@ -72,6 +73,44 @@ def parse_article_input(article_no_raw):
     if m:
         return int(m.group(1)), None, False             # 일반조문
     return None, None, False
+
+# [추가] 조/가지조문/항/호 파싱 함수
+def parse_article_title_full(article_title):
+    pattern = (
+        r"제(?P<jo>\d+)조"
+        r"(의(?P<gaji>\d+))?"
+        r"(?:\s*제(?P<hang>\d+)항)?"
+        r"(?:\s*제(?P<ho>\d+)호)?"
+    )
+    m = re.fullmatch(pattern, str(article_title).strip())
+    if not m:
+        return None
+    return {
+        "조": int(m.group("jo")) if m.group("jo") else None,
+        "가지": int(m.group("gaji")) if m.group("gaji") else None,
+        "항": int(m.group("hang")) if m.group("hang") else None,
+        "호": int(m.group("ho")) if m.group("ho") else None,
+    }
+
+# [추가] 조문 유형 반환
+def get_article_type(info):
+    if info["가지"] is not None:
+        return "가지조문"
+    else:
+        return "일반조문"
+
+# [추가] 자동 링크 생성
+def make_article_link(law_name, info):
+    base_url = "https://www.law.go.kr/법령/"
+    law_path = law_name.replace(" ", "")
+    path = f"제{info['조']}조"
+    if info['가지'] is not None:
+        path += f"의{info['가지']}"
+    if info['항'] is not None:
+        path += f"제{info['항']}항"
+    if info['호'] is not None:
+        path += f"제{info['호']}호"
+    return f"{base_url}{law_path}/{path}"
 
 def get_law_id(law_name: str, api_key: str) -> Optional[str]:
     normalized = normalize_law_name(law_name)
@@ -160,14 +199,13 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                         subno = None
             this_article_name = f"제{no}조의{subno}" if subno is not None else f"제{no}조"
             available.append(this_article_name)
-            # 가지조문이면: 본문 추출 시도만 하고, 안 나오면 안내+링크만
             if no == target_no and (
                 subno == target_subno or
                 (target_subno is None and subno is None)
             ):
                 canonical_article_no = this_article_name
                 full_article = article.get("조문내용", "내용 없음")
-                if is_branch:  # 가지조문(분조) → 본문만, 항/호 지원 X
+                if is_branch:
                     if full_article and full_article != "내용 없음":
                         return full_article, full_article, available, canonical_article_no
                     else:
@@ -176,7 +214,6 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                             f"아래 국가법령정보센터 바로가기를 확인해 주세요."
                         )
                         return 안내, "", available, canonical_article_no
-                # 일반 조문일 때는 항/호까지 추출
                 if not clause_no:
                     return full_article, full_article, available, canonical_article_no
                 clauses = article.get("항", [])
@@ -198,7 +235,6 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                             return "요청한 호를 찾을 수 없습니다.", full_article, available, canonical_article_no
                         return clause_content, full_article, available, canonical_article_no
                 return "요청한 항을 찾을 수 없습니다.", full_article, available, canonical_article_no
-        # 추출 실패 fallback
         if law_name_full and article_no_raw:
             html_text = fetch_article_html_fallback(law_name_full, article_no_raw)
             canonical_article_no = None
@@ -323,6 +359,15 @@ def get_law_clause(
             law_name_full, canonical_article_no or article_no,
             clause_no, subclause_no, 내용, law_url, 조문전체, available_articles
         )
+        # [추가] 파싱/유형/링크 정보 생성
+        parsing_info = parse_article_title_full(canonical_article_no or article_no)
+        if parsing_info:
+            parsing_type = get_article_type(parsing_info)
+            parsing_link = make_article_link(law_name_full, parsing_info)
+        else:
+            parsing_type = None
+            parsing_link = None
+
         result = {
             "source": "api",
             "출처": "lawService+HTMLfallback",
@@ -336,6 +381,13 @@ def get_law_clause(
             "markdown": markdown,
             "조문목록": available_articles
         }
+        # [추가] 파싱 정보 응답에 추가
+        if parsing_info:
+            result.update({
+                **parsing_info,
+                "type": parsing_type,
+                "auto_link": parsing_link
+            })
         log_entry["status"] = "success"
         log_entry["result"] = result
         recent_logs.append(log_entry)
@@ -355,3 +407,4 @@ def get_law_clause(
 @app.head("/test-log")
 def test_log():
     return add_privacy_notice({"recent_logs": recent_logs[-10:]})
+
