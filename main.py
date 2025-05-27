@@ -26,8 +26,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·가지조문·항·호 조회, 설계자 실전 대응",
-    version="8.3.0"
+    description="국가법령정보센터 DRF API 기반 실시간 조문·가지조문·항·호 조회, 설계자 실전 대응 (가지조문 판정+실전로그)",
+    version="8.4.0"
 )
 
 app.add_middleware(
@@ -57,7 +57,6 @@ def normalize_law_name(name: str) -> str:
     return name.replace(" ", "").strip()
 
 def normalize_article_no(article_no_raw):
-    """오입력('제14조조', '14조조' 등) → '제14조' 변환"""
     if not article_no_raw:
         return article_no_raw
     s = article_no_raw.replace(" ", "")
@@ -66,7 +65,7 @@ def normalize_article_no(article_no_raw):
     return s
 
 def parse_article_input(article_no_raw):
-    """조문/가지조문/항/호 정확 판별"""
+    """정확하게 '의' 포함 여부로 가지조문/일반조문 판별"""
     if not article_no_raw:
         return None, None, None, None, False
     s = article_no_raw.replace(" ", "")
@@ -148,7 +147,6 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
     try:
         data = xmltodict.parse(xml_text)
         law = data.get("법령", {})
-        # 모든 조문 관련 단위 합침
         all_articles = []
         paths = [
             ["조문", "조문단위"],
@@ -170,31 +168,22 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
             except Exception:
                 continue
         available = []
-        for article in all_articles:
+        print("=== [실전 LOG] 전체 조문목록 ===")
+        for idx, article in enumerate(all_articles):
             no_raw = str(article.get("조문번호", "0"))
             subno_raw = article.get("조문가지번호")
-            if subno_raw not in [None, '', '0', 0]:
-                try:
-                    _no = int(no_raw) if no_raw.isdigit() else 0
-                    _subno = int(subno_raw)
-                    this_article_name = f"제{_no}조의{_subno}"
-                except:
-                    this_article_name = str(no_raw)
-            else:
-                try:
-                    _no = int(no_raw) if no_raw.isdigit() else 0
-                    this_article_name = f"제{_no}조"
-                except:
-                    this_article_name = str(no_raw)
+            # "의" 포함 → 가지조문
+            is_gaji = "의" in no_raw
+            this_article_name = no_raw
+            full_article = article.get("조문내용", "내용 없음")
+            print(f"{idx+1}: 조문명:{this_article_name} | 가지조문:{is_gaji} | 내용:{full_article[:30]}")
             available.append(this_article_name)
-            # 입력값과 일치 (공백 제거)
+            # 입력값과 일치하면 무조건 본문 반환 (가지조문 여부와 무관하게!)
             if this_article_name.replace(" ", "") == (article_no_raw or "").replace(" ", ""):
                 canonical_article_no = this_article_name
-                full_article = article.get("조문내용", "내용 없음")
-                # 가지조문: 본문 있으면 반환, 없으면 안내+정확한 링크
-                if is_branch:
+                # 가지조문이면, 본문 없으면 안내+링크
+                if is_gaji:
                     if full_article and full_article != "내용 없음":
-                        # 가지조문 전체 반환 (항/호 구조 거의 없음)
                         return full_article, full_article, available, canonical_article_no
                     else:
                         안내 = (
@@ -203,7 +192,7 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                             f"<a href='{make_article_link(law_name_full, article_no_raw)}' target='_blank'>국가법령정보센터 {article_no_raw} 바로가기</a>"
                         )
                         return 안내, "", available, canonical_article_no
-                # 일반 조문: 전체 본문+항/호 반환
+                # 일반조문: 전체 본문+항/호 반환
                 if hang is None:
                     return full_article, full_article, available, canonical_article_no
                 clauses = article.get("항", [])
