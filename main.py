@@ -26,8 +26,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·가지조문·항·호 조회 자동화",
-    version="8.5.0"
+    description="국가법령정보센터 DRF API + HTML 크롤링 기반 실시간 조문·가지조문·항·호 조회 자동화",
+    version="8.6.0"
 )
 
 app.add_middleware(
@@ -65,15 +65,12 @@ def normalize_article_no(article_no_raw):
     return s
 
 def parse_article_input(article_no_raw):
-    """정확하게 '의' 포함 여부로 가지조문/일반조문 판별"""
     if not article_no_raw:
         return None, None, None, None, False
     s = article_no_raw.replace(" ", "")
-    # 가지조문: 제N조의M (항/호 붙으면 같이 추출)
     m = re.match(r"제(\d+)조의(\d+)(?:제(\d+)항)?(?:제(\d+)호)?", s)
     if m:
         return int(m.group(1)), int(m.group(2)), int(m.group(3)) if m.group(3) else None, int(m.group(4)) if m.group(4) else None, True
-    # 일반조문: 제N조 (항/호 붙으면 같이 추출)
     m = re.match(r"제(\d+)조(?:제(\d+)항)?(?:제(\d+)호)?", s)
     if m:
         return int(m.group(1)), None, int(m.group(2)) if m.group(2) else None, int(m.group(3)) if m.group(3) else None, False
@@ -123,20 +120,37 @@ def fetch_article_html_fallback(law_name_full, article_no):
         res = requests.get(article_url, timeout=7)
         res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
+
+        # 1차: 다양한 selector로 시도
         selectors = [
-            ".law-article .article",
-            ".article",
-            ".law-article",
-            "#article",
-            ".cont_article",
+            ".law-article .article", ".article", ".law-article", "#article", ".cont_article",
+            ".contlawview", "#conContents",
         ]
         main = None
         for sel in selectors:
             main = soup.select_one(sel)
             if main:
                 break
-        text = main.get_text(separator="\n", strip=True) if main else "HTML에서 조문 본문을 찾을 수 없습니다."
-        return text
+        if main:
+            text = main.get_text(separator="\n", strip=True)
+            if "조문 본문을 찾을 수 없습니다" not in text and len(text.strip()) > 50:
+                return text
+
+        # 2차: 전체 텍스트 블록에서 조문/항/호/가지조문 등 패턴 매칭 추출
+        text_blocks = []
+        for tag in soup.find_all(['div', 'p', 'li']):
+            t = tag.get_text(separator="\n", strip=True)
+            # 대표 조문/항/호/가지조문 패턴 포함
+            if (
+                len(t) > 20 and 
+                re.search(r"(제\s*\d+조|항|호|가지조문|법령|목적|시행|벌칙)", t)
+            ):
+                text_blocks.append(t)
+        all_text = "\n".join(text_blocks)
+        if all_text and len(all_text) > 50:
+            return all_text
+
+        return "HTML에서 조문 본문을 찾을 수 없습니다."
     except Exception as e:
         return f"(HTML fallback 오류: {e})"
 
@@ -175,10 +189,8 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
             this_article_name = no_raw
             full_article = article.get("조문내용", "내용 없음")
             available.append(this_article_name)
-            # 입력값과 일치하면 무조건 본문 반환 (가지조문 여부와 무관하게!)
             if this_article_name.replace(" ", "") == (article_no_raw or "").replace(" ", ""):
                 canonical_article_no = this_article_name
-                # 가지조문이면, 본문 없으면 안내+링크
                 if is_gaji:
                     if full_article and full_article != "내용 없음":
                         return full_article, full_article, available, canonical_article_no
@@ -189,7 +201,6 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                             f"<a href='{make_article_link(law_name_full, article_no_raw)}' target='_blank'>국가법령정보센터 {article_no_raw} 바로가기</a>"
                         )
                         return 안내, "", available, canonical_article_no
-                # 일반조문: 전체 본문+항/호 반환
                 if hang is None:
                     return full_article, full_article, available, canonical_article_no
                 clauses = article.get("항", [])
@@ -216,13 +227,14 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
             html_text = fetch_article_html_fallback(law_name_full, article_no_raw)
             canonical_article_no = None
             안내 = (
-                f"해당 조문(가지조문 등)은 시스템에서 자동 추출이 불가합니다.<br>"
-                f"아래 국가법령정보센터 바로가기를 확인해 주세요.<br>"
-                f"<a href='{make_article_link(law_name_full, article_no_raw)}' target='_blank'>국가법령정보센터 {article_no_raw} 바로가기</a>"
+                f"API/DB에 조문 본문이 없어 웹페이지에서 추출했습니다.<br>"
+                f"아래 국가법령정보센터 바로가기도 참고하세요.<br>"
+                f"<a href='{make_article_link(law_name_full, article_no_raw)}' target='_blank'>국가법령정보센터 {article_no_raw} 바로가기</a><br>"
+                f"<br>본문:<br>{html_text if html_text else '웹페이지에서도 본문 추출 실패'}"
             )
             return (
                 안내,
-                "",
+                html_text if html_text else "",
                 available,
                 canonical_article_no
             )
@@ -365,3 +377,4 @@ def get_law_clause(
 @app.head("/test-log")
 def test_log():
     return add_privacy_notice({"recent_logs": recent_logs[-10:]})
+
