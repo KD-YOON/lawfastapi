@@ -27,7 +27,7 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API + HTML 크롤링 기반 실시간 조문·가지조문·항·호 구조화 자동화",
-    version="9.0.0"
+    version="9.1.0"
 )
 
 app.add_middleware(
@@ -57,11 +57,34 @@ def normalize_law_name(name: str) -> str:
     return name.replace(" ", "").strip()
 
 def normalize_article_no(article_no_raw):
+    # 입력값에서 공백 등 제거만 (링크 생성은 fix_article_no에서 처리)
     if not article_no_raw:
         return article_no_raw
     s = article_no_raw.replace(" ", "")
     s = re.sub(r"제(\d+)조조", r"제\1조", s)
     s = re.sub(r"(\d+)조조", r"\1조", s)
+    return s
+
+def fix_article_no(article_no):
+    """
+    '14' → '제14조', '17의3' → '제17조의3', 이미 포맷이면 그대로
+    """
+    s = str(article_no).replace(" ", "")
+    # 완전체는 그대로 ('제14조', '제17조의3' 등)
+    if re.match(r'^제\d+조(의\d+)?$', s):
+        return s
+    # '14' → '제14조'
+    if s.isdigit():
+        return f'제{s}조'
+    # '17의3' → '제17조의3'
+    m = re.match(r"^(\d+)의(\d+)$", s)
+    if m:
+        return f"제{m.group(1)}조의{m.group(2)}"
+    # 혹시 앞뒤로 '제'/'조' 없는 이상한 값이면 마지막으로 보정
+    if not s.startswith('제'):
+        s = '제' + s
+    if not ('조' in s):
+        s = s + '조'
     return s
 
 def parse_article_input(article_no_raw):
@@ -79,10 +102,9 @@ def parse_article_input(article_no_raw):
 def make_article_link(law_name, article_no):
     law_url_name = quote(law_name.replace(" ", ""), safe='')
     if article_no:
-        article_path = quote(str(article_no).replace(" ", ""), safe='')
+        article_path = quote(fix_article_no(article_no), safe='')  # fix_article_no를 거친다
         return f"https://www.law.go.kr/법령/{law_url_name}/{article_path}"
     else:
-        # 조문번호 없을 경우 법령 메인
         return f"https://www.law.go.kr/법령/{law_url_name}"
 
 def split_article_text_to_structure(text):
@@ -160,7 +182,8 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
 def fetch_article_html_fallback(law_name_full, article_no):
     try:
         law_url_name = quote(law_name_full.replace(' ', ''), safe='')
-        article_url = f"https://www.law.go.kr/법령/{law_url_name}/제{str(article_no).replace(' ','')}"
+        article_path = quote(fix_article_no(article_no), safe='')
+        article_url = f"https://www.law.go.kr/법령/{law_url_name}/{article_path}"
         res = requests.get(article_url, timeout=7)
         res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
@@ -179,7 +202,6 @@ def fetch_article_html_fallback(law_name_full, article_no):
             if "조문 본문을 찾을 수 없습니다" not in text and len(text.strip()) > 20:
                 return text, split_article_text_to_structure(text)
 
-        # selector 실패시 본문 텍스트 대량 수집 (마지막 Fallback)
         text_blocks = []
         for tag in soup.find_all(['div', 'p', 'li', 'span', 'section']):
             t = tag.get_text(separator="\n", strip=True)
@@ -230,12 +252,10 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
             this_article_name = no_raw
             is_gaji = "의" in no_raw
             available.append(this_article_name)
-            # 가지조문도 normalize해서 비교
             if normalize_article_no(this_article_name) == normalize_article_no(article_no_raw):
                 matched_article = article
                 canonical_article_no = this_article_name
                 full_article = article.get("조문내용", "내용 없음")
-                # 가지조문 자동분리 및 안내 강화
                 if is_gaji:
                     if full_article and full_article != "내용 없음":
                         return full_article, full_article, available, canonical_article_no, split_article_text_to_structure(full_article)
@@ -246,7 +266,6 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                             f"<a href='{make_article_link(law_name_full, article_no_raw)}'>국가법령정보센터 바로가기</a>"
                         )
                         return 안내, "", available, canonical_article_no, None
-                # 항/호 분리
                 if hang is None:
                     return full_article, full_article, available, canonical_article_no, split_article_text_to_structure(full_article)
                 clauses = article.get("항", [])
@@ -284,7 +303,6 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                 canonical_article_no,
                 structured_json
             )
-        # 완전히 실패할 경우 안내문 및 실제 존재하는 조문목록 제공
         안내 = (
             f"요청한 조문({article_no_raw})을 찾을 수 없습니다.<br>"
             f"실제 조회 가능한 조문번호: {', '.join(available) if available else '없음'}<br>"
