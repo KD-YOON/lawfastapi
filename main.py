@@ -454,3 +454,111 @@ def get_law_clause(
 @app.head("/test-log")
 def test_log():
     return add_privacy_notice({"recent_logs": recent_logs[-10:]})
+# === [추가 1] 법령목록조회서비스 (LawListService) ===
+@app.get("/law-list", summary="법령목록조회서비스(LawListService)")
+def get_law_list(
+    query: Optional[str] = Query(None, example="학교폭력"),
+    law_cls: Optional[str] = Query(None, description="법령구분코드(예: 001)", example="001"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    params = {
+        "OC": API_KEY,
+        "target": "law",
+        "type": "XML",
+        "pIndex": page,
+        "pSize": page_size,
+    }
+    if query:
+        params["query"] = query
+    if law_cls:
+        params["displayCls"] = law_cls
+    res = requests.get("https://www.law.go.kr/DRF/lawSearch.do", params=params)
+    res.raise_for_status()
+    data = xmltodict.parse(res.text)
+    return add_privacy_notice(data)
+
+# === [추가 2] 조문목록조회서비스 (ArticleListService) ===
+@app.get("/article-list", summary="조문목록조회서비스(ArticleListService)")
+def get_article_list(
+    law_id: str = Query(..., example="52413"),
+    type: str = Query("XML", description="XML 또는 JSON"),
+):
+    params = {
+        "OC": API_KEY,
+        "target": "article",
+        "type": type.upper(),
+        "ID": law_id,
+        "pIndex": 1,
+        "pSize": 1000
+    }
+    res = requests.get("https://www.law.go.kr/DRF/articleList.do", params=params)
+    res.raise_for_status()
+    if type.upper() == "JSON":
+        return add_privacy_notice(res.json())
+    else:
+        return add_privacy_notice(xmltodict.parse(res.text))
+
+# === [추가 3] 조문상세조회서비스 (ArticleService) ===
+@app.get("/article-detail", summary="조문상세조회서비스(ArticleService)")
+def get_article_detail(
+    law_id: str = Query(..., example="52413"),
+    article_seq: str = Query(..., example="1084544"),
+    type: str = Query("XML", description="XML 또는 JSON"),
+):
+    params = {
+        "OC": API_KEY,
+        "target": "article",
+        "type": type.upper(),
+        "ID": law_id,
+        "articleSeq": article_seq
+    }
+    res = requests.get("https://www.law.go.kr/DRF/articleService.do", params=params)
+    res.raise_for_status()
+    if type.upper() == "JSON":
+        return add_privacy_notice(res.json())
+    else:
+        return add_privacy_notice(xmltodict.parse(res.text))
+
+# === [추가 4] 통합 스키마 안내 (예시) ===
+openapi_schemas = {
+    "law-list": {
+        "법령목록": [
+            {
+                "법령ID": "52413",
+                "법령명한글": "학교폭력예방 및 대책에 관한 법률 시행령",
+                "법령약칭명": "...",
+                "공포일자": "YYYYMMDD",
+                "시행일자": "YYYYMMDD",
+                # ... 기타 필드
+            }
+        ]
+    },
+    "article-list": {
+        "조문목록": [
+            {
+                "조문ID": "1084544",
+                "조문번호": "제14조의3",
+                "조문제목": "...",
+                "조문구분": "...",
+                # ... 기타
+            }
+        ]
+    },
+    "article-detail": {
+        "조문상세": {
+            "조문ID": "1084544",
+            "조문번호": "제14조의3",
+            "조문제목": "...",
+            "조문내용": "...",
+            # ... 기타
+        }
+    }
+}
+
+@app.get("/schema", summary="통합 스키마/예시")
+def get_openapi_schema():
+    """
+    통합 서비스 스키마(예시) 안내
+    """
+    return add_privacy_notice(openapi_schemas)
