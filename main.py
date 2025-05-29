@@ -1,14 +1,14 @@
 import os
 import re
 import datetime
-import requests
-import xmltodict
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from urllib.parse import quote
-from time import time
+import requests
+import xmltodict
+from bs4 import BeautifulSoup
 
 PRIVACY_URL = "https://github.com/KD-YOON/privacy-policy"
 PRIVACY_NOTICE = (
@@ -26,8 +26,8 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 
 app = FastAPI(
     title="School LawBot API",
-    description="국가법령정보센터 DRF API 기반 실시간 조문·가지조문·항·호 구조화 및 UX/가이드 메타데이터 자동화",
-    version="10.0.0"
+    description="국가법령정보센터 DRF API + HTML 크롤링 기반 실시간 조문·가지조문·항·호 구조화 자동화",
+    version="9.1.0"
 )
 
 app.add_middleware(
@@ -57,6 +57,7 @@ def normalize_law_name(name: str) -> str:
     return name.replace(" ", "").strip()
 
 def normalize_article_no(article_no_raw):
+    # 입력값에서 공백 등 제거만 (링크 생성은 fix_article_no에서 처리)
     if not article_no_raw:
         return article_no_raw
     s = article_no_raw.replace(" ", "")
@@ -69,13 +70,17 @@ def fix_article_no(article_no):
     '14' → '제14조', '17의3' → '제17조의3', 이미 포맷이면 그대로
     """
     s = str(article_no).replace(" ", "")
+    # 완전체는 그대로 ('제14조', '제17조의3' 등)
     if re.match(r'^제\d+조(의\d+)?$', s):
         return s
+    # '14' → '제14조'
     if s.isdigit():
         return f'제{s}조'
+    # '17의3' → '제17조의3'
     m = re.match(r"^(\d+)의(\d+)$", s)
     if m:
         return f"제{m.group(1)}조의{m.group(2)}"
+    # 혹시 앞뒤로 '제'/'조' 없는 이상한 값이면 마지막으로 보정
     if not s.startswith('제'):
         s = '제' + s
     if not ('조' in s):
@@ -97,7 +102,7 @@ def parse_article_input(article_no_raw):
 def make_article_link(law_name, article_no):
     law_url_name = quote(law_name.replace(" ", ""), safe='')
     if article_no:
-        article_path = quote(fix_article_no(article_no), safe='')
+        article_path = quote(fix_article_no(article_no), safe='')  # fix_article_no를 거친다
         return f"https://www.law.go.kr/법령/{law_url_name}/{article_path}"
     else:
         return f"https://www.law.go.kr/법령/{law_url_name}"
@@ -108,6 +113,7 @@ def split_article_text_to_structure(text):
     ho_pattern = re.compile(r'(제\d+호)[\s:.\)]*')
 
     result = {}
+    # 가지조문 분리 (제N조의M)
     gaji_splits = gaji_pattern.split(text)
     if len(gaji_splits) > 1:
         for i in range(1, len(gaji_splits), 2):
@@ -116,6 +122,7 @@ def split_article_text_to_structure(text):
             result[gaji_title] = split_article_text_to_structure(gaji_content)
         return result
 
+    # 항 분리
     hang_splits = hang_pattern.split(text)
     if len(hang_splits) > 1:
         hang_dict = {}
@@ -123,6 +130,7 @@ def split_article_text_to_structure(text):
         for i in range(1, len(hang_splits), 2):
             hang_title = hang_splits[i]
             hang_content = hang_splits[i+1] if i+1 < len(hang_splits) else ""
+            # 호 분리
             ho_splits = ho_pattern.split(hang_content)
             if len(ho_splits) > 1:
                 ho_dict = {}
@@ -170,6 +178,45 @@ def get_law_id(law_name: str, api_key: str) -> Optional[str]:
     except Exception as e:
         print("[lawId 오류]", e)
         return None
+
+def fetch_article_html_fallback(law_name_full, article_no):
+    try:
+        law_url_name = quote(law_name_full.replace(' ', ''), safe='')
+        article_path = quote(fix_article_no(article_no), safe='')
+        article_url = f"https://www.law.go.kr/법령/{law_url_name}/{article_path}"
+        res = requests.get(article_url, timeout=7)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        selectors = [
+            ".law-article .article", ".article", ".law-article", "#article", ".cont_article",
+            ".contlawview", "#conContents",
+        ]
+        main = None
+        for sel in selectors:
+            main = soup.select_one(sel)
+            if main:
+                break
+        if main:
+            text = main.get_text(separator="\n", strip=True)
+            if "조문 본문을 찾을 수 없습니다" not in text and len(text.strip()) > 20:
+                return text, split_article_text_to_structure(text)
+
+        text_blocks = []
+        for tag in soup.find_all(['div', 'p', 'li', 'span', 'section']):
+            t = tag.get_text(separator="\n", strip=True)
+            if (
+                len(t) > 20 and 
+                re.search(r"(제\s*\d+조|항|호|가지조문|법령|목적|시행|벌칙)", t)
+            ):
+                text_blocks.append(t)
+        all_text = "\n".join(text_blocks)
+        if all_text and len(all_text) > 20:
+            return all_text, split_article_text_to_structure(all_text)
+
+        return "HTML에서 조문 본문을 찾을 수 없습니다.", None
+    except Exception as e:
+        return f"(HTML fallback 오류: {e})", None
 
 def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclause_no=None, law_name_full=None):
     circled_nums = {'①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9', '⑩': '10'}
@@ -240,100 +287,49 @@ def extract_article_with_full(xml_text, article_no_raw, clause_no=None, subclaus
                             return "요청한 호를 찾을 수 없습니다.", full_article, available, canonical_article_no, None
                         return clause_content, full_article, available, canonical_article_no, None
                 return "요청한 항을 찾을 수 없습니다.", full_article, available, canonical_article_no, None
-        return "", "", available, None, None
+        # Fallback: 본문 추출 실패, HTML에서 구조분리
+        if law_name_full and article_no_raw:
+            html_text, structured_json = fetch_article_html_fallback(law_name_full, article_no_raw)
+            안내 = (
+                f"API/DB에 조문 본문이 없어 웹페이지에서 추출했습니다.<br>"
+                f"아래 국가법령정보센터 바로가기도 참고하세요.<br>"
+                f"<a href='{make_article_link(law_name_full, article_no_raw)}'>국가법령정보센터 바로가기</a><br>"
+                f"<br>본문:<br>{html_text if html_text else '웹페이지에서도 본문 추출 실패'}"
+            )
+            return (
+                안내,
+                html_text if html_text else "",
+                available,
+                canonical_article_no,
+                structured_json
+            )
+        안내 = (
+            f"요청한 조문({article_no_raw})을 찾을 수 없습니다.<br>"
+            f"실제 조회 가능한 조문번호: {', '.join(available) if available else '없음'}<br>"
+            f"아래 국가법령정보센터에서 직접 확인하세요.<br>"
+            f"<a href='{make_article_link(law_name_full, None)}'>법령 바로가기</a>"
+        )
+        return 안내, "", available, None, None
     except Exception as e:
         return f"파싱 오류: {e}", "", [], None, None
 
-@app.get("/law", summary="법령 조문 조회")
-@app.head("/law")
-def get_law_clause(
-    law_name: str = Query(None, example="학교폭력예방법시행령"),
-    article_no: str = Query(None, example="14의2"),
-    clause_no: Optional[str] = Query(None),
-    subclause_no: Optional[str] = Query(None),
-    device: Optional[str] = Query(None),  # 모바일/PC 구분용
-    request: Request = None
-):
-    start_time = time()
-    if not law_name or not article_no:
-        return add_privacy_notice({
-            "found": False,
-            "error": "law_name, article_no 파라미터는 필수입니다.",
-            "guide": "예시: ‘14’, ‘14의2’, ‘제14조의2’ 모두 입력 가능. 띄어쓰기는 무시됩니다."
-        })
-    api_key = API_KEY
-    law_name_full = resolve_full_law_name(law_name)
-    article_no_user = article_no
-    article_no_corrected = fix_article_no(article_no)
-    law_id = get_law_id(law_name_full, api_key)
-    service_status = "OK" if law_id else "NOT_FOUND"
-    processing_time = "%.2fs" % (time() - start_time)
-    last_updated = datetime.datetime.now().isoformat()
-
-    if not law_id:
-        return add_privacy_notice({
-            "found": False,
-            "message": "법령명을 찾을 수 없습니다.",
-            "lawName": law_name_full,
-            "userInput": article_no_user,
-            "correctedArticleNo": article_no_corrected,
-            "guide": "‘14’, ‘14의2’, ‘제14조의2’ 모두 입력 가능. 띄어쓰기는 무시됩니다.",
-            "directLink": make_article_link(law_name_full, None),
-            "serviceStatus": service_status,
-            "processingTime": processing_time,
-            "lastUpdated": last_updated,
-            "viewType": "responsive-card" if (device == "mobile") else "table"
-        })
-
-    res = requests.get("https://www.law.go.kr/DRF/lawService.do", params={
-        "OC": api_key,
-        "target": "law",
-        "type": "XML",
-        "ID": law_id,
-        "pIndex": 1,
-        "pSize": 1000
-    })
-    res.raise_for_status()
-    article_no_norm = normalize_article_no(article_no)
-    내용, 조문전체, available_articles, canonical_article_no, 구조화 = extract_article_with_full(
-        res.text, article_no_norm, clause_no, subclause_no, law_name_full
+def make_markdown_table(law_name, article_no, clause_no, subclause_no, 내용, 법령링크, 조문전체, available_articles=None):
+    내용_fmt = 내용.replace("|", "\\|").replace("\n", "<br>")
+    조문전체_fmt = 조문전체.replace("|", "\\|").replace("\n", "<br>")
+    tbl = (
+        "| 항목 | 내용 |\n"
+        "|------|------|\n"
+        f"| 법령명 | {law_name} |\n"
+        f"| 조문 | {article_no or ''} |\n"
+        f"| 항 | {str(clause_no)+'항' if clause_no else ''} |\n"
+        f"| 호 | {str(subclause_no)+'호' if subclause_no else ''} |\n"
+        f"| 내용 | {내용_fmt} |\n"
+        f"| 조문 전체 | {조문전체_fmt} |\n"
+        f"| 출처 | [국가법령정보센터 바로가기]({법령링크}) |\n"
     )
-
-    # 요약 생성(본문 앞 100자)
-    summary = ""
-    if 조문전체:
-        summary = 조문전체[:100].replace("\n", " ") + ("..." if len(조문전체) > 100 else "")
-    elif 내용 and 내용 != "":
-        summary = 내용[:100].replace("\n", " ") + ("..." if len(내용) > 100 else "")
-
-    found = bool(조문전체 and "없습니다" not in 조문전체 and len(조문전체.strip()) > 10)
-    message = (
-        "정확히 일치하는 조문이 없습니다. 아래 목록에서 선택하거나 다시 입력해 주세요."
-        if not found else "정상적으로 조회되었습니다."
-    )
-
-    result = {
-        "lawName": law_name_full,
-        "articleNo": canonical_article_no or article_no_corrected,
-        "userInput": article_no_user,
-        "correctedArticleNo": article_no_corrected,
-        "found": found,
-        "message": message,
-        "articleContent": 조문전체 if found else "",
-        "summary": summary,
-        "structure": 구조화,
-        "articleList": available_articles,
-        "related": available_articles[:5] if available_articles else [],
-        "guide": "‘14’, ‘14의2’, ‘제14조의2’ 등 자유롭게 입력 가능. 띄어쓰기는 무시됩니다.",
-        "directLink": make_article_link(law_name_full, canonical_article_no or article_no_corrected),
-        "viewType": "responsive-card" if (device == "mobile") else "table",
-        "shortcutButton": True,
-        "serviceStatus": service_status,
-        "processingTime": processing_time,
-        "lastUpdated": last_updated,
-        "usageExample": "피해학생 보호조치 결정의 기준으로 활용됩니다."  # 실제 활용사례 DB 연동 가능
-    }
-    return add_privacy_notice(result)
+    if available_articles:
+        tbl += f"| 조회가능 조문번호 | {', '.join(available_articles)} |\n"
+    return tbl
 
 @app.get("/")
 @app.head("/")
@@ -356,6 +352,103 @@ def privacy_policy():
         "message": "본 서비스의 개인정보 처리방침은 다음 링크에서 확인할 수 있습니다.",
         "url": PRIVACY_URL
     })
+
+@app.get("/law", summary="법령 조문 조회")
+@app.head("/law")
+def get_law_clause(
+    law_name: str = Query(None, example="학교폭력예방법시행령"),
+    article_no: str = Query(None, example="제14조의 2"),
+    clause_no: Optional[str] = Query(None),
+    subclause_no: Optional[str] = Query(None),
+    request: Request = None
+):
+    if not law_name or not article_no:
+        return add_privacy_notice({
+            "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법시행령&article_no=제14조의 2"
+        })
+    api_key = API_KEY
+    log_entry = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "client_ip": request.client.host if request else "unknown",
+        "law_name": law_name,
+        "article_no": article_no,
+        "clause_no": clause_no,
+        "subclause_no": subclause_no,
+        "api_key": api_key
+    }
+    try:
+        law_name_full = resolve_full_law_name(law_name)
+        law_id = get_law_id(law_name_full, api_key)
+        if not law_id:
+            log_entry["status"] = "error"
+            log_entry["error"] = "법령 ID 조회 실패"
+            recent_logs.append(log_entry)
+            if len(recent_logs) > 50:
+                recent_logs.pop(0)
+            return JSONResponse(content=add_privacy_notice({
+                "error": "법령 ID 조회 실패",
+                "안내": "입력한 법령명이 정확한지 확인하거나, 아래 국가법령정보센터에서 직접 검색해 주세요.",
+                "법령메인": make_article_link(law_name_full, None)
+            }), status_code=404)
+        res = requests.get("https://www.law.go.kr/DRF/lawService.do", params={
+            "OC": api_key,
+            "target": "law",
+            "type": "XML",
+            "ID": law_id,
+            "pIndex": 1,
+            "pSize": 1000
+        })
+        res.raise_for_status()
+        if "법령이 없습니다" in res.text:
+            log_entry["status"] = "error"
+            log_entry["error"] = "해당 법령은 조회할 수 없습니다."
+            recent_logs.append(log_entry)
+            if len(recent_logs) > 50:
+                recent_logs.pop(0)
+            return JSONResponse(content=add_privacy_notice({
+                "error": "해당 법령은 조회할 수 없습니다.",
+                "법령메인": make_article_link(law_name_full, None)
+            }), status_code=403)
+        article_no_norm = normalize_article_no(article_no)
+        내용, 조문전체, available_articles, canonical_article_no, 구조화 = extract_article_with_full(
+            res.text, article_no_norm, clause_no, subclause_no, law_name_full
+        )
+        law_url = make_article_link(law_name_full, canonical_article_no or article_no_norm)
+        markdown = make_markdown_table(
+            law_name_full, canonical_article_no or article_no_norm,
+            clause_no, subclause_no, 내용, law_url, 조문전체, available_articles
+        )
+        result = {
+            "source": "api",
+            "출처": "lawService+HTMLfallback+구조화",
+            "법령명": law_name_full,
+            "조문": f"{canonical_article_no or article_no_norm}" if article_no else "",
+            "항": f"{clause_no}항" if clause_no else "",
+            "호": f"{subclause_no}호" if subclause_no else "",
+            "내용": 내용,
+            "조문전체": 조문전체,
+            "구조화": 구조화,  # 항/호/가지조문 자동 분리 구조
+            "법령링크": law_url,
+            "markdown": markdown,
+            "조문목록": available_articles
+        }
+        log_entry["status"] = "success"
+        log_entry["result"] = result
+        recent_logs.append(log_entry)
+        if len(recent_logs) > 50:
+            recent_logs.pop(0)
+        return JSONResponse(content=add_privacy_notice(result))
+    except Exception as e:
+        log_entry["status"] = "error"
+        log_entry["error"] = str(e)
+        recent_logs.append(log_entry)
+        if len(recent_logs) > 50:
+            recent_logs.pop(0)
+        print("🚨 API 에러:", e)
+        return JSONResponse(content=add_privacy_notice({
+            "error": "API 호출 실패",
+            "에러내용": str(e)
+        }), status_code=500)
 
 @app.get("/test-log", summary="최근 요청 로그 10건 조회")
 @app.head("/test-log")
