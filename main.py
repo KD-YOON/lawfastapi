@@ -1,14 +1,155 @@
 import os
 import re
-import datetime
-from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
-from urllib.parse import quote
 import requests
 import xmltodict
-from bs4 import BeautifulSoup
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
+
+app = FastAPI(
+    title="School LawBot API",
+    description="국가법령정보센터 DRF API + HTML 크롤링 기반 실시간 조문·가지조문·항·호 구조화 자동화",
+    version="9.1.2",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+def get_api_key(api_key: str = None):
+    """api_key가 없으면 환경변수(LAW_API_KEY)에서 자동 보정"""
+    if not api_key:
+        api_key = os.environ.get("LAW_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API Key is required. (환경변수 미설정)")
+    return api_key
+
+@app.get("/")
+def root():
+    return {"msg": "School LawBot API is LIVE!"}
+
+@app.get("/law-list")
+def get_law_list(
+    query: str = Query(None, description="법령명, 키워드"),
+    law_cls: str = Query(None, description="법령구분코드"),
+    page: int = Query(1, description="페이지 번호"),
+    page_size: int = Query(20, description="페이지 크기"),
+    api_key: str = Query(None, description="API 키 (미입력시 자동 주입)")
+):
+    api_key = get_api_key(api_key)
+    params = {
+        "OC": api_key,
+        "target": "law",
+        "display": page_size,
+        "query": query or "",
+        "lawCls": law_cls or "",
+        "page": page
+    }
+    res = requests.get("https://www.law.go.kr/DRF/lawSearch.do", params=params)
+    try:
+        data = xmltodict.parse(res.text)
+        return data
+    except Exception:
+        return {"error": "파싱 실패", "raw": res.text}
+
+@app.get("/law-detail")
+def get_law_detail(
+    law_id: str = Query(..., description="법령ID"),
+    type: str = Query("XML", description="응답 포맷(XML/JSON)"),
+    api_key: str = Query(None, description="API 키 (미입력시 자동 주입)")
+):
+    api_key = get_api_key(api_key)
+    params = {
+        "OC": api_key,
+        "ID": law_id,
+        "type": type
+    }
+    res = requests.get("https://www.law.go.kr/DRF/lawService.do", params=params)
+    if type.upper() == "JSON":
+        try:
+            return res.json()
+        except Exception:
+            return {"error": "파싱 실패", "raw": res.text}
+    return res.text
+
+@app.get("/article-list")
+def get_article_list(
+    law_id: str = Query(..., description="법령ID"),
+    type: str = Query("XML", description="응답 포맷(XML/JSON)"),
+    api_key: str = Query(None, description="API 키 (미입력시 자동 주입)")
+):
+    api_key = get_api_key(api_key)
+    params = {
+        "OC": api_key,
+        "ID": law_id,
+        "type": type
+    }
+    res = requests.get("https://www.law.go.kr/DRF/articleList.do", params=params)
+    if type.upper() == "JSON":
+        try:
+            return res.json()
+        except Exception:
+            return {"error": "파싱 실패", "raw": res.text}
+    return res.text
+
+@app.get("/article-detail")
+def get_article_detail(
+    law_id: str = Query(..., description="법령ID"),
+    article_seq: str = Query(..., description="조문ID(SEQ)"),
+    type: str = Query("XML", description="응답 포맷(XML/JSON)"),
+    api_key: str = Query(None, description="API 키 (미입력시 자동 주입)")
+):
+    api_key = get_api_key(api_key)
+    params = {
+        "OC": api_key,
+        "ID": law_id,
+        "articleSeq": article_seq,
+        "type": type
+    }
+    res = requests.get("https://www.law.go.kr/DRF/articleService.do", params=params)
+    if type.upper() == "JSON":
+        try:
+            return res.json()
+        except Exception:
+            return {"error": "파싱 실패", "raw": res.text}
+    return res.text
+
+@app.get("/law")
+def get_law_clause(
+    law_name: str = Query(..., description="법령명 또는 약칭"),
+    article_no: str = Query(..., description="조문 번호"),
+    clause_no: str = Query(None, description="항 번호"),
+    subclause_no: str = Query(None, description="호 번호"),
+    api_key: str = Query(None, description="국가법령정보센터 OpenAPI 키 (미입력시 자동 주입)")
+):
+    """
+    법령명, 조문, 항, 호로 본문 조회 (파싱은 샘플/단순)
+    실제 DRF API에서 law_name, article_no, clause_no, subclause_no 조합으로 파싱 필요
+    """
+    api_key = get_api_key(api_key)
+    params = {
+        "OC": api_key,
+        "target": "law",
+        "query": law_name
+    }
+    res = requests.get("https://www.law.go.kr/DRF/lawSearch.do", params=params)
+    try:
+        data = xmltodict.parse(res.text)
+    except Exception:
+        return {"error": "파싱 실패", "raw": res.text}
+    # article_no, clause_no, subclause_no 파싱(샘플) – 실제 구조에 맞게 구현
+    return data
+
+@app.get("/schema")
+def get_api_schema():
+    """OpenAPI 예시 스키마 제공"""
+    return {"msg": "스키마 엔드포인트 예시 (실제 openapi.json 파일 반환 가능)"}
 
 PRIVACY_URL = "https://github.com/KD-YOON/privacy-policy"
 PRIVACY_NOTICE = (
