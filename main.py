@@ -27,9 +27,11 @@ API_KEY = os.environ.get("OC_KEY", "default_key")
 app = FastAPI(
     title="School LawBot API",
     description="국가법령정보센터 DRF API + HTML 크롤링 기반 실시간 조문·가지조문·항·호 구조화 자동화",
-    version="9.1.0"
+    version="9.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
