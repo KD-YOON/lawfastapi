@@ -370,7 +370,7 @@ def get_law_clause(
                 recent_logs.pop(0)
             return JSONResponse(content=add_privacy_notice({
                 "error": "법령 ID 조회
-실패",
+"실패",
 "안내": "입력한 법령명이 정확한지 확인하거나, 아래 국가법령정보센터에서 직접 검색해 주세요.",
 "법령메인": make_article_link(law_name_full, None)
 }), status_code=404)
