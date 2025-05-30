@@ -187,7 +187,6 @@ def fetch_article_html_fallback(law_name_full, article_no):
         res = requests.get(article_url, timeout=7)
         res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
-
         selectors = [
             ".law-article .article", ".article", ".law-article", "#article", ".cont_article",
             ".contlawview", "#conContents",
