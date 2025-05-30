@@ -342,10 +342,10 @@ def get_law_clause(
     article_no: str = Query(None, example="제14조의 2"),
     clause_no: Optional[str] = Query(None),
     subclause_no: Optional[str] = Query(None),
-    api_key: Optional[str] = Query(None, description="API 키"),   # 추가!
+    api_key: Optional[str] = Query(None, description="API 키"),
     request: Request = None
 ):
-    key = api_key or API_KEY  # 쿼리 우선, 없으면 기존 환경변수
+    key = api_key or API_KEY
     if not law_name or not article_no:
         return add_privacy_notice({
             "error": "law_name, article_no 파라미터는 필수입니다. 예시: /law?law_name=학교폭력예방법시행령&article_no=제14조의 2"
@@ -370,70 +370,70 @@ def get_law_clause(
                 recent_logs.pop(0)
             return JSONResponse(content=add_privacy_notice({
                 "error": "법령 ID 조회 실패",
-"안내": "입력한 법령명이 정확한지 확인하거나, 아래 국가법령정보센터에서 직접 검색해 주세요.",
-"법령메인": make_article_link(law_name_full, None)
-}), status_code=404)
-res = requests.get("https://www.law.go.kr/DRF/lawService.do", params={
-"OC": key,
-"target": "law",
-"type": "XML",
-"ID": law_id,
-"pIndex": 1,
-"pSize": 1000
-})
-res.raise_for_status()
-if "법령이 없습니다" in res.text:
-log_entry["status"] = "error"
-log_entry["error"] = "해당 법령은 조회할 수 없습니다."
-recent_logs.append(log_entry)
-if len(recent_logs) > 50:
-recent_logs.pop(0)
-return JSONResponse(content=add_privacy_notice({
-"error": "해당 법령은 조회할 수 없습니다.",
-"법령메인": make_article_link(law_name_full, None)
-}), status_code=403)
-article_no_norm = normalize_article_no(article_no)
-내용, 조문전체, available_articles, canonical_article_no, 구조화 = extract_article_with_full(
-res.text, article_no_norm, clause_no, subclause_no, law_name_full
-)
-law_url = make_article_link(law_name_full, canonical_article_no or article_no_norm)
-markdown = make_markdown_table(
-law_name_full, canonical_article_no or article_no_norm,
-clause_no, subclause_no, 내용, law_url, 조문전체, available_articles
-)
-result = {
-"source": "api",
-"출처": "lawService+HTMLfallback+구조화",
-"법령명": law_name_full,
-"조문": f"{canonical_article_no or article_no_norm}" if article_no else "",
-"항": f"{clause_no}항" if clause_no else "",
-"호": f"{subclause_no}호" if subclause_no else "",
-"내용": 내용,
-"조문전체": 조문전체,
-"구조화": 구조화, # 항/호/가지조문 자동 분리 구조
-"법령링크": law_url,
-"markdown": markdown,
-"조문목록": available_articles
-}
-log_entry["status"] = "success"
-log_entry["result"] = result
-recent_logs.append(log_entry)
-if len(recent_logs) > 50:
-recent_logs.pop(0)
-return JSONResponse(content=add_privacy_notice(result))
-except Exception as e:
-log_entry["status"] = "error"
-log_entry["error"] = str(e)
-recent_logs.append(log_entry)
-if len(recent_logs) > 50:
-recent_logs.pop(0)
-print("🚨 API 에러:", e)
-return JSONResponse(content=add_privacy_notice({
-"error": "API 호출 실패",
-"에러내용": str(e)
-}), status_code=500)
+                "안내": "입력한 법령명이 정확한지 확인하거나, 아래 국가법령정보센터에서 직접 검색해 주세요.",
+                "법령메인": make_article_link(law_name_full, None)
+            }), status_code=404)
+        res = requests.get("https://www.law.go.kr/DRF/lawService.do", params={
+            "OC": key,
+            "target": "law",
+            "type": "XML",
+            "ID": law_id,
+            "pIndex": 1,
+            "pSize": 1000
+        })
+        res.raise_for_status()
+        if "법령이 없습니다" in res.text:
+            log_entry["status"] = "error"
+            log_entry["error"] = "해당 법령을 조회할 수 없습니다."
+            recent_logs.append(log_entry)
+            if len(recent_logs) > 50:
+                recent_logs.pop(0)
+            return JSONResponse(content=add_privacy_notice({
+                "error": "해당 법령을 조회할 수 없습니다.",
+                "법령메인": make_article_link(law_name_full, None)
+            }), status_code=403)
+        article_no_norm = normalize_article_no(article_no)
+        내용, 조문전체, available_articles, canonical_article_no, 구조화 = extract_article_with_full(
+            res.text, article_no_norm, clause_no, subclause_no, law_name_full
+        )
+        law_url = make_article_link(law_name_full, canonical_article_no or article_no_norm)
+        markdown = make_markdown_table(
+            law_name_full, canonical_article_no or article_no_norm,
+            clause_no, subclause_no, 내용, law_url, 조문전체, available_articles
+        )
+        result = {
+            "source": "api",
+            "출처": "lawService+HTMLfallback+구조화",
+            "법령명": law_name_full,
+            "조문": f"{canonical_article_no or article_no_norm}" if article_no else "",
+            "항": f"{clause_no}항" if clause_no else "",
+            "호": f"{subclause_no}호" if subclause_no else "",
+            "내용": 내용,
+            "조문전체": 조문전체,
+            "구조화": 구조화,
+            "법령링크": law_url,
+            "markdown": markdown,
+            "조문목록": available_articles
+        }
+        log_entry["status"] = "success"
+        log_entry["result"] = result
+        recent_logs.append(log_entry)
+        if len(recent_logs) > 50:
+            recent_logs.pop(0)
+        return JSONResponse(content=add_privacy_notice(result))
+    except Exception as e:
+        log_entry["status"] = "error"
+        log_entry["error"] = str(e)
+        recent_logs.append(log_entry)
+        if len(recent_logs) > 50:
+            recent_logs.pop(0)
+        print("🚨 API 에러:", e)
+        return JSONResponse(content=add_privacy_notice({
+            "error": "API 호출 실패",
+            "에러내용": str(e)
+        }), status_code=500)
 
 @app.get("/test-log", summary="최근 요청 로그 10건 조회")
 @app.head("/test-log")
 def test_log():
-return add_privacy_notice({"recent_logs": recent_logs[-10:]})
+    return add_privacy_notice({"recent_logs": recent_logs[-10:]})
